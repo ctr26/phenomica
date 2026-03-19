@@ -1,7 +1,6 @@
 """Smoke tests for phenomica models and losses."""
 
 import torch
-import pytest
 
 
 def test_simple_distiller_forward():
@@ -59,6 +58,7 @@ def test_multifunction_extract_features():
 
 def test_build_model_simple():
     from types import SimpleNamespace
+
     from phenomica.models import build_model
 
     cfg = SimpleNamespace(
@@ -71,6 +71,7 @@ def test_build_model_simple():
 
 def test_build_model_multifunction():
     from types import SimpleNamespace
+
     from phenomica.models import build_model
 
     cfg = SimpleNamespace(

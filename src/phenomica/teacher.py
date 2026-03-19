@@ -44,7 +44,7 @@ class DINOv2Teacher(nn.Module):
         self._model.eval()
 
         self._embed_dim: int = self._model.embed_dim
-        self._patch_size: int = self._model.patch_size if hasattr(self._model, "patch_size") else 14
+        self._patch_size: int = getattr(self._model, "patch_size", 14)
 
         # Decide which transformer blocks to tap for intermediate features.
         num_blocks = len(self._model.blocks)
