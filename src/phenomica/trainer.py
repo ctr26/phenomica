@@ -89,6 +89,7 @@ class DistillationTrainer:
         self.data_cfg = data_cfg
 
         self.start_epoch = 0
+        self._current_epoch = 0
         self.best_val_loss = float("inf")
         self.patience_counter = 0
 
@@ -291,6 +292,8 @@ class DistillationTrainer:
         eval_freq = getattr(self.training_cfg, "eval_freq", None)
 
         for epoch in range(self.start_epoch, self.training_cfg.epochs):
+            self._current_epoch = epoch
+
             # Set epoch on distributed sampler for proper shuffling.
             if self.is_distributed and hasattr(train_loader.sampler, "set_epoch"):
                 train_loader.sampler.set_epoch(epoch)
@@ -389,12 +392,12 @@ class DistillationTrainer:
             path: File path for the checkpoint.
         """
         state = {
-            "model": self._unwrapped_model().state_dict(),
-            "optimizer": self.optimizer.state_dict(),
-            "scheduler": (
+            "model_state_dict": self._unwrapped_model().state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": (
                 self.scheduler.state_dict() if self.scheduler is not None else None
             ),
-            "epoch": self.start_epoch,
+            "epoch": self._current_epoch,
             "best_val_loss": self.best_val_loss,
             "model_cfg": self.model_cfg,
             "teacher_cfg": self.teacher_cfg,
@@ -410,12 +413,13 @@ class DistillationTrainer:
             path: File path to the checkpoint.
         """
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
-        self._unwrapped_model().load_state_dict(checkpoint["model"])
-        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        self._unwrapped_model().load_state_dict(checkpoint["model_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
-        if self.scheduler is not None and checkpoint.get("scheduler") is not None:
-            self.scheduler.load_state_dict(checkpoint["scheduler"])
+        if self.scheduler is not None and checkpoint.get("scheduler_state_dict") is not None:
+            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
-        self.start_epoch = checkpoint.get("epoch", 0)
+        self.start_epoch = checkpoint.get("epoch", 0) + 1
+        self._current_epoch = self.start_epoch
         self.best_val_loss = checkpoint.get("best_val_loss", float("inf"))
-        logger.info("Loaded checkpoint from %s (epoch %d)", path, self.start_epoch)
+        logger.info("Loaded checkpoint from %s (resuming from epoch %d)", path, self.start_epoch)
