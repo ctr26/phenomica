@@ -58,7 +58,7 @@ def main(cfg: DictConfig) -> None:
             mem_gb=cfg.cluster.mem_gb,
             cpus_per_task=cfg.cluster.cpus_per_task,
             slurm_account=cfg.cluster.get("slurm_account"),
-            slurm_wckey="",
+            slurm_wckey="default",
         )
         job = executor.submit(_run_training, cfg)
         logger.info("Submitted SLURM job: %s", job.job_id)
