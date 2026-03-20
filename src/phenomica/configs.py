@@ -101,7 +101,7 @@ class TrainingConfig:
 @dataclass
 class ClusterConfig:
     use_submitit: bool = False
-    partition: str = "h100"
+    partition: str = "hopper"
     gpus_per_node: int = 4
     nodes: int = 1
     timeout_min: int = 720
