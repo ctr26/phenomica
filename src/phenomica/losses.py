@@ -4,9 +4,62 @@ Both loss classes populate self._last_loss_metrics dict for component-level
 tracking, following the pattern from txam-training.
 """
 
+from __future__ import annotations
+
+from typing import Callable
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# Loss registry for extensible loss types
+LOSS_REGISTRY: dict[str, type[nn.Module]] = {}
+
+
+def register_loss(name: str) -> Callable[[type[nn.Module]], type[nn.Module]]:
+    """Decorator to register a loss class in the global registry.
+
+    Args:
+        name: Loss type identifier (e.g., "cospress", "vitkd").
+
+    Returns:
+        Decorator that registers the class and returns it unchanged.
+    """
+
+    def decorator(cls: type[nn.Module]) -> type[nn.Module]:
+        LOSS_REGISTRY[name] = cls
+        return cls
+
+    return decorator
+
+
+def build_loss(loss_type: str, **kwargs) -> nn.Module:
+    """Factory to construct a loss module by type name.
+
+    Preserves existing behavior for "mse"/"cosine"/"combined" (mapped to
+    DistillationLoss) and constructs registered losses from LOSS_REGISTRY.
+
+    Args:
+        loss_type: Loss identifier (e.g., "mse", "cospress", "vitkd").
+        **kwargs: Arguments forwarded to the loss constructor.
+
+    Returns:
+        Instantiated loss module.
+
+    Raises:
+        ValueError: If loss_type is unknown.
+    """
+    # Existing builtin types map to DistillationLoss
+    if loss_type in ("mse", "cosine", "combined"):
+        return DistillationLoss(loss_type=loss_type, **kwargs)
+
+    # Registered custom losses
+    if loss_type in LOSS_REGISTRY:
+        return LOSS_REGISTRY[loss_type](**kwargs)
+
+    # Unknown type
+    known = ["mse", "cosine", "combined"] + list(LOSS_REGISTRY.keys())
+    raise ValueError(f"Unknown loss_type='{loss_type}'. Known types: {known}")
 
 
 class DistillationLoss(nn.Module):
@@ -30,8 +83,7 @@ class DistillationLoss(nn.Module):
         super().__init__()
         if loss_type not in ("mse", "cosine", "combined"):
             raise ValueError(
-                f"loss_type must be 'mse', 'cosine', or 'combined', "
-                f"got '{loss_type}'"
+                f"loss_type must be 'mse', 'cosine', or 'combined', got '{loss_type}'"
             )
         self.loss_type = loss_type
         self.mse_weight = mse_weight
@@ -94,18 +146,14 @@ class MultiFunctionDistillationLoss(nn.Module):
     ) -> None:
         super().__init__()
         if loss_type not in ("mse", "cosine"):
-            raise ValueError(
-                f"loss_type must be 'mse' or 'cosine', got '{loss_type}'"
-            )
+            raise ValueError(f"loss_type must be 'mse' or 'cosine', got '{loss_type}'")
         self.global_weight = global_weight
         self.spatial_weight = spatial_weight
         self.scale_weight = scale_weight
         self.loss_type = loss_type
         self._last_loss_metrics: dict[str, float] = {}
 
-    def _compute_loss(
-        self, pred: torch.Tensor, target: torch.Tensor
-    ) -> torch.Tensor:
+    def _compute_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Compute base loss between prediction and target tensors."""
         if self.loss_type == "mse":
             return F.mse_loss(pred, target)
@@ -127,9 +175,7 @@ class MultiFunctionDistillationLoss(nn.Module):
         Returns:
             Scalar loss tensor.
         """
-        global_loss = self._compute_loss(
-            student_outputs["global"], teacher_outputs["cls"]
-        )
+        global_loss = self._compute_loss(student_outputs["global"], teacher_outputs["cls"])
         spatial_loss = self._compute_loss(
             student_outputs["spatial"], teacher_outputs["patch_stats"]
         )
@@ -157,3 +203,12 @@ class MultiFunctionDistillationLoss(nn.Module):
             "total": total.item(),
         }
         return total
+
+
+__all__ = [
+    "DistillationLoss",
+    "MultiFunctionDistillationLoss",
+    "LOSS_REGISTRY",
+    "register_loss",
+    "build_loss",
+]
