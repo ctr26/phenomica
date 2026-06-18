@@ -10,11 +10,17 @@ annotations for validation via pydantic_parser at instantiation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from hydra_zen import builds, store
 from omegaconf import MISSING
-from pydantic import NonNegativeFloat, NonNegativeInt, PositiveFloat, PositiveInt
+from pydantic import (
+    Field,
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveFloat,
+    PositiveInt,
+)
 
 
 @dataclass
@@ -50,7 +56,7 @@ class DataConfig:
     batch_size: PositiveInt = 256
     num_workers: NonNegativeInt = 8
     pin_memory: bool = True
-    val_split: float = 0.1
+    val_split: Annotated[float, Field(ge=0.0, le=1.0)] = 0.1
 
 
 @dataclass
@@ -64,8 +70,8 @@ class TrainingConfig:
     warmup_start_factor: PositiveFloat = 1e-4
     gradient_clip: Optional[float] = 1.0
     loss_type: Literal["mse", "cosine", "combined"] = "mse"
-    cosine_weight: float = 1.0
-    mse_weight: float = 1.0
+    cosine_weight: NonNegativeFloat = 1.0
+    mse_weight: NonNegativeFloat = 1.0
     use_wandb: bool = True
     wandb_project: str = "phenomica"
     wandb_run_name: Optional[str] = None
@@ -73,8 +79,8 @@ class TrainingConfig:
     seed: int = 42
     use_ddp: bool = True
     early_stopping_patience: Optional[int] = 20
-    validation_freq: int = 1
-    eval_freq: Optional[int] = 10
+    validation_freq: PositiveInt = 1
+    eval_freq: Optional[PositiveInt] = 10
 
 
 @dataclass
