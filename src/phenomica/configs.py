@@ -14,7 +14,7 @@ from typing import Literal, Optional
 
 from hydra_zen import builds, store
 from omegaconf import MISSING
-from pydantic import PositiveFloat, PositiveInt
+from pydantic import NonNegativeFloat, NonNegativeInt, PositiveFloat, PositiveInt
 
 
 @dataclass
@@ -48,7 +48,7 @@ class DataConfig:
     root: str = MISSING
     image_size: PositiveInt = 224
     batch_size: PositiveInt = 256
-    num_workers: PositiveInt = 8
+    num_workers: NonNegativeInt = 8
     pin_memory: bool = True
     val_split: float = 0.1
 
@@ -57,10 +57,10 @@ class DataConfig:
 class TrainingConfig:
     epochs: PositiveInt = 100
     learning_rate: PositiveFloat = 1e-3
-    weight_decay: PositiveFloat = 1e-4
+    weight_decay: NonNegativeFloat = 1e-4
     optimizer: Literal["adam", "adamw"] = "adamw"
     lr_scheduler: Optional[Literal["cosine", "step"]] = "cosine"
-    warmup_epochs: PositiveInt = 5
+    warmup_epochs: NonNegativeInt = 5
     warmup_start_factor: PositiveFloat = 1e-4
     gradient_clip: Optional[float] = 1.0
     loss_type: Literal["mse", "cosine", "combined"] = "mse"

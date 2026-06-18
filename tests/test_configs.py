@@ -4,12 +4,33 @@ from __future__ import annotations
 
 import pytest
 import torch
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
 from hydra_zen import builds, instantiate
 from hydra_zen.third_party.pydantic import pydantic_parser
 from pydantic import ValidationError
 
+import phenomica.train  # noqa: F401 -- registers top-level config + groups
 from phenomica.configs import ModelConfig, TeacherConfig, TrainingConfig
 from phenomica.trainer import DistillationTrainer
+
+_PRESETS = [
+    (group, name)
+    for group, names in {
+        "model": [
+            "simple_resnet18",
+            "simple_effnet",
+            "simple_vit_tiny",
+            "multi_resnet18",
+            "multi_effnet",
+        ],
+        "teacher": ["dinov2_base", "dinov2_small", "dinov2_large"],
+        "data": ["imagenet", "custom"],
+        "training": ["default", "debug"],
+        "cluster": ["local", "biohive"],
+    }.items()
+    for name in names
+]
 
 
 def test_enum_bug_regression_guard():
@@ -143,3 +164,18 @@ def test_dim_mismatch_raises():
             teacher_cfg=teacher_cfg,
             data_cfg=data_cfg,
         )
+
+
+@pytest.mark.parametrize("group,name", _PRESETS)
+def test_all_presets_instantiate(group: str, name: str) -> None:
+    """Every registered preset composes and passes pydantic validation.
+
+    Guards against over-strict field constraints (e.g. a ``PositiveInt`` on a
+    field a preset legitimately sets to 0, such as ``training=debug`` with
+    ``weight_decay=0``/``warmup_epochs=0``) that the default-config tests do
+    not exercise.
+    """
+    GlobalHydra.instance().clear()
+    with initialize(version_base="1.3", config_path=None):
+        cfg = compose(config_name="phenomica", overrides=[f"{group}={name}"])
+    instantiate(getattr(cfg, group), _target_wrapper_=pydantic_parser)
