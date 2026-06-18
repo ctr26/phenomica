@@ -62,8 +62,10 @@ def test_build_model_simple():
     from phenomica.models import build_model
 
     cfg = SimpleNamespace(
-        variant="simple", backbone="resnet18",
-        projection_dim=384, pretrained_backbone=False,
+        variant="simple",
+        backbone="resnet18",
+        projection_dim=384,
+        pretrained_backbone=False,
     )
     model = build_model(cfg)
     assert model(torch.randn(1, 3, 224, 224)).shape == (1, 384)
@@ -75,9 +77,12 @@ def test_build_model_multifunction():
     from phenomica.models import build_model
 
     cfg = SimpleNamespace(
-        variant="multifunction", backbone="resnet18",
-        teacher_cls_dim=384, teacher_patch_dim=384,
-        teacher_layers=[3, 6], pretrained_backbone=False,
+        variant="multifunction",
+        backbone="resnet18",
+        teacher_cls_dim=384,
+        teacher_patch_dim=384,
+        teacher_layers=[3, 6],
+        pretrained_backbone=False,
     )
     model = build_model(cfg)
     out = model(torch.randn(1, 3, 224, 224))
@@ -144,3 +149,133 @@ def test_data_transforms():
     val_t = get_transforms(224, is_train=False)
     assert train_t is not None
     assert val_t is not None
+
+
+def test_loss_registry_decorator():
+    """Test loss registry mechanism."""
+    import torch.nn as nn
+
+    from phenomica.losses import LOSS_REGISTRY, register_loss
+
+    # Create a dummy loss class
+    @register_loss("test_dummy_loss")
+    class DummyLoss(nn.Module):
+        def forward(self, student_output, teacher_outputs):
+            return torch.tensor(0.0)
+
+    assert "test_dummy_loss" in LOSS_REGISTRY
+    assert LOSS_REGISTRY["test_dummy_loss"] is DummyLoss
+
+
+def test_build_loss_existing_types():
+    """Test build_loss returns correct classes for existing loss types."""
+    from phenomica.losses import DistillationLoss, build_loss
+
+    # Test simple distillation losses
+    loss_mse = build_loss("mse")
+    assert isinstance(loss_mse, DistillationLoss)
+    assert loss_mse.loss_type == "mse"
+
+    loss_cosine = build_loss("cosine")
+    assert isinstance(loss_cosine, DistillationLoss)
+    assert loss_cosine.loss_type == "cosine"
+
+    loss_combined = build_loss("combined", mse_weight=0.5, cosine_weight=0.5)
+    assert isinstance(loss_combined, DistillationLoss)
+    assert loss_combined.loss_type == "combined"
+
+
+def test_build_loss_unknown_type():
+    """Test build_loss raises ValueError for unknown loss types."""
+    from phenomica.losses import build_loss
+
+    try:
+        build_loss("unknown_loss_type")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "unknown_loss_type" in str(e).lower()
+        assert "known types" in str(e).lower() or "valid" in str(e).lower()
+
+
+def test_build_loss_registered_type():
+    """Test build_loss can construct registered losses."""
+    import torch.nn as nn
+
+    from phenomica.losses import build_loss, register_loss
+
+    @register_loss("test_registered")
+    class TestRegistered(nn.Module):
+        def __init__(self, alpha=1.0):
+            super().__init__()
+            self.alpha = alpha
+
+        def forward(self, student_output, teacher_outputs):
+            return torch.tensor(0.0)
+
+    loss = build_loss("test_registered", alpha=2.0)
+    assert isinstance(loss, TestRegistered)
+    assert loss.alpha == 2.0
+
+
+def test_teacher_layer_patch_tokens():
+    """Test teacher outputs include layer_patch_tokens with correct shapes."""
+    from phenomica.teacher import DINOv2Teacher
+
+    # Use monkeypatched FakeDINOv2Teacher
+    teacher = DINOv2Teacher()
+    x = torch.randn(2, 3, 224, 224)
+    outputs = teacher(x)
+
+    assert "layer_patch_tokens" in outputs
+    layer_patch_tokens = outputs["layer_patch_tokens"]
+    assert isinstance(layer_patch_tokens, list)
+    assert len(layer_patch_tokens) > 0
+    # Each should be [B, N, D]
+    for layer_tokens in layer_patch_tokens:
+        assert layer_tokens.ndim == 3
+        assert layer_tokens.size(0) == 2  # batch
+        assert layer_tokens.size(2) == teacher.embed_dim
+
+
+def test_teacher_attention_maps_disabled():
+    """Test teacher doesn't extract attention maps when extract_attention=False."""
+    from phenomica.teacher import DINOv2Teacher
+
+    teacher = DINOv2Teacher(extract_attention=False)
+    x = torch.randn(2, 3, 224, 224)
+    outputs = teacher(x)
+
+    # Should have None or omit attn_maps when disabled
+    attn_maps = outputs.get("attn_maps")
+    assert attn_maps is None or "attn_maps" not in outputs
+
+
+def test_fake_teacher_extended_outputs():
+    """Test FakeDINOv2Teacher provides layer_patch_tokens and attn_maps."""
+    from tests.conftest import FakeDINOv2Teacher
+
+    # Test with extract_attention=True
+    teacher = FakeDINOv2Teacher(extract_attention=True)
+    x = torch.randn(2, 3, 224, 224)
+    outputs = teacher(x)
+
+    # Check layer_patch_tokens
+    assert "layer_patch_tokens" in outputs
+    layer_patch_tokens = outputs["layer_patch_tokens"]
+    assert isinstance(layer_patch_tokens, list)
+    assert len(layer_patch_tokens) == len(teacher._extract_layers)
+    for layer_tokens in layer_patch_tokens:
+        assert layer_tokens.shape[0] == 2  # batch
+        assert layer_tokens.shape[1] == 256  # N patches
+        assert layer_tokens.shape[2] == teacher.embed_dim
+
+    # Check attn_maps when enabled
+    assert "attn_maps" in outputs
+    attn_maps = outputs["attn_maps"]
+    assert isinstance(attn_maps, list)
+    assert len(attn_maps) == len(teacher._extract_layers)
+    for attn_map in attn_maps:
+        assert attn_map.shape[0] == 2  # batch
+        # num_heads (typically 12 for vitb14)
+        assert attn_map.ndim == 3
+        assert attn_map.shape[2] == 256  # N patches
