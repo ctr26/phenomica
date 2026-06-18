@@ -103,23 +103,6 @@ class ClusterConfig:
     log_dir: str = "slurm_logs"
 
 
-@dataclass
-class SlurmLauncherConfig:
-    """Hydra submitit_slurm launcher config for multirun sweeps."""
-
-    _target_: str = "hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher"
-    submitit_folder: str = "${hydra.sweep.dir}/.submitit/%j"
-    timeout_min: PositiveInt = 720
-    cpus_per_task: PositiveInt = 8
-    gpus_per_node: PositiveInt = 4
-    tasks_per_node: PositiveInt = 4
-    mem_gb: PositiveInt = 64
-    nodes: PositiveInt = 1
-    partition: str = "hopper"
-    account: Optional[str] = None
-    name: str = "${hydra.job.name}"
-
-
 # -- hydra-zen store registration --------------------------------------------
 
 
@@ -204,16 +187,6 @@ def register_configs() -> None:
 
     _preset(ClusterConfig, "cluster", "local")
     _preset(ClusterConfig, "cluster", "biohive", use_submitit=True)
-
-    # Launcher presets for --multirun sweeps
-    _preset(SlurmLauncherConfig, "hydra/launcher", "submitit_slurm")
-    _preset(
-        SlurmLauncherConfig,
-        "hydra/launcher",
-        "submitit_slurm_biohive",
-        partition="biohive",
-        account="rxrx",
-    )
 
 
 register_configs()
