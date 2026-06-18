@@ -74,11 +74,28 @@ class DistillationTrainer:
                 loss_type=training_cfg.loss_type,
             )
         else:
-            self.criterion = build_loss(
-                training_cfg.loss_type,
-                mse_weight=training_cfg.mse_weight,
-                cosine_weight=training_cfg.cosine_weight,
-            )
+            # Extract all training config fields as dict for loss hyperparams
+            if hasattr(training_cfg, "model_dump"):
+                # Pydantic config
+                loss_kwargs = training_cfg.model_dump()
+            elif hasattr(training_cfg, "_target_"):
+                # OmegaConf structured config
+                from omegaconf import OmegaConf
+
+                loss_kwargs = OmegaConf.to_container(training_cfg, resolve=True)
+            else:
+                # Fallback: dataclass or plain object
+                import dataclasses
+
+                if dataclasses.is_dataclass(training_cfg):
+                    loss_kwargs = dataclasses.asdict(training_cfg)
+                else:
+                    loss_kwargs = vars(training_cfg)
+
+            # Remove loss_type from kwargs (passed positionally)
+            loss_kwargs.pop("loss_type", None)
+
+            self.criterion = build_loss(training_cfg.loss_type, **loss_kwargs)
         self.criterion = self.criterion.to(self.device)
 
         # Optimizer.
