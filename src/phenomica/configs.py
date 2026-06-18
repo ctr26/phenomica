@@ -93,123 +93,69 @@ class ClusterConfig:
 # -- hydra-zen store registration --------------------------------------------
 
 
+def _preset(config_cls: type, group: str, name: str, **overrides: object) -> None:
+    """Register one preset config into the hydra-zen store group.
+
+    Builds a structured config from ``config_cls`` (with the full signature
+    populated so every field is overridable) and stores it under
+    ``group``/``name``.
+    """
+    store(
+        builds(config_cls, populate_full_signature=True, **overrides),
+        group=group,
+        name=name,
+    )
+
+
 def register_configs() -> None:
-    """Register all config schemas and presets into hydra-zen store."""
-    # -- Model presets -------------------------------------------------------
-    store(
-        builds(ModelConfig, populate_full_signature=True),
-        group="model",
-        name="simple_resnet18",
-    )
-    store(
-        builds(ModelConfig, backbone="efficientnet_b0", populate_full_signature=True),
-        group="model",
-        name="simple_effnet",
-    )
-    store(
-        builds(
-            ModelConfig, backbone="vit_tiny_patch16_224", populate_full_signature=True
-        ),
-        group="model",
-        name="simple_vit_tiny",
-    )
-    store(
-        builds(ModelConfig, variant="multifunction", populate_full_signature=True),
-        group="model",
-        name="multi_resnet18",
-    )
-    store(
-        builds(
-            ModelConfig,
-            variant="multifunction",
-            backbone="efficientnet_b0",
-            populate_full_signature=True,
-        ),
-        group="model",
-        name="multi_effnet",
+    """Register all config presets into the hydra-zen store."""
+    _preset(ModelConfig, "model", "simple_resnet18")
+    _preset(ModelConfig, "model", "simple_effnet", backbone="efficientnet_b0")
+    _preset(ModelConfig, "model", "simple_vit_tiny", backbone="vit_tiny_patch16_224")
+    _preset(ModelConfig, "model", "multi_resnet18", variant="multifunction")
+    _preset(
+        ModelConfig,
+        "model",
+        "multi_effnet",
+        variant="multifunction",
+        backbone="efficientnet_b0",
     )
 
-    # -- Teacher presets -----------------------------------------------------
-    store(
-        builds(TeacherConfig, populate_full_signature=True),
-        group="teacher",
-        name="dinov2_base",
+    _preset(TeacherConfig, "teacher", "dinov2_base")
+    _preset(
+        TeacherConfig, "teacher", "dinov2_small",
+        model_name="dinov2_vits14", embed_dim=384,
     )
-    store(
-        builds(
-            TeacherConfig,
-            model_name="dinov2_vits14",
-            embed_dim=384,
-            populate_full_signature=True,
-        ),
-        group="teacher",
-        name="dinov2_small",
-    )
-    store(
-        builds(
-            TeacherConfig,
-            model_name="dinov2_vitl14",
-            embed_dim=1024,
-            populate_full_signature=True,
-        ),
-        group="teacher",
-        name="dinov2_large",
+    _preset(
+        TeacherConfig, "teacher", "dinov2_large",
+        model_name="dinov2_vitl14", embed_dim=1024,
     )
 
-    # -- Data presets --------------------------------------------------------
-    store(
-        builds(DataConfig, root="data/imagenet", populate_full_signature=True),
-        group="data",
-        name="imagenet",
-    )
-    store(
-        builds(
-            DataConfig,
-            root="data/custom",
-            batch_size=128,
-            num_workers=4,
-            populate_full_signature=True,
-        ),
-        group="data",
-        name="custom",
+    _preset(DataConfig, "data", "imagenet", root="data/imagenet")
+    _preset(
+        DataConfig, "data", "custom",
+        root="data/custom", batch_size=128, num_workers=4,
     )
 
-    # -- Training presets ----------------------------------------------------
-    store(
-        builds(TrainingConfig, populate_full_signature=True),
-        group="training",
-        name="default",
-    )
-    store(
-        builds(
-            TrainingConfig,
-            epochs=10,
-            weight_decay=0.0,
-            optimizer="adam",
-            lr_scheduler=None,
-            warmup_epochs=0,
-            gradient_clip=None,
-            use_wandb=False,
-            use_ddp=False,
-            early_stopping_patience=None,
-            eval_freq=5,
-            populate_full_signature=True,
-        ),
-        group="training",
-        name="debug",
+    _preset(TrainingConfig, "training", "default")
+    _preset(
+        TrainingConfig,
+        "training",
+        "debug",
+        epochs=10,
+        weight_decay=0.0,
+        optimizer="adam",
+        lr_scheduler=None,
+        warmup_epochs=0,
+        gradient_clip=None,
+        use_wandb=False,
+        use_ddp=False,
+        early_stopping_patience=None,
+        eval_freq=5,
     )
 
-    # -- Cluster presets -----------------------------------------------------
-    store(
-        builds(ClusterConfig, populate_full_signature=True),
-        group="cluster",
-        name="local",
-    )
-    store(
-        builds(ClusterConfig, use_submitit=True, populate_full_signature=True),
-        group="cluster",
-        name="biohive",
-    )
+    _preset(ClusterConfig, "cluster", "local")
+    _preset(ClusterConfig, "cluster", "biohive", use_submitit=True)
 
 
 register_configs()
