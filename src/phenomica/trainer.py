@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from phenomica.distributed import AverageMeter, is_main_process, setup_device
 from phenomica.eval import evaluate_model
-from phenomica.losses import DistillationLoss, MultiFunctionDistillationLoss
+from phenomica.losses import MultiFunctionDistillationLoss, build_loss
 from phenomica.models import build_model
 from phenomica.teacher import DINOv2Teacher
 
@@ -43,16 +43,10 @@ class DistillationTrainer:
         data_cfg: Any,
     ) -> None:
         # Device and distribution setup.
-        self.device, self.is_distributed, self.world_size = setup_device(
-            training_cfg.use_ddp
-        )
+        self.device, self.is_distributed, self.world_size = setup_device(training_cfg.use_ddp)
 
         # Teacher -- frozen, never wrapped in DDP.
-        extract_layers = (
-            model_cfg.teacher_layers
-            if model_cfg.variant == "multifunction"
-            else None
-        )
+        extract_layers = model_cfg.teacher_layers if model_cfg.variant == "multifunction" else None
         self.teacher = DINOv2Teacher(
             model_name=teacher_cfg.model_name,
             extract_layers=extract_layers,
@@ -80,8 +74,8 @@ class DistillationTrainer:
                 loss_type=training_cfg.loss_type,
             )
         else:
-            self.criterion = DistillationLoss(
-                loss_type=training_cfg.loss_type,
+            self.criterion = build_loss(
+                training_cfg.loss_type,
                 mse_weight=training_cfg.mse_weight,
                 cosine_weight=training_cfg.cosine_weight,
             )
@@ -128,9 +122,7 @@ class DistillationTrainer:
             weight_decay=cfg.weight_decay,
         )
 
-    def _build_scheduler(
-        self, cfg: Any
-    ) -> torch.optim.lr_scheduler.LRScheduler | None:
+    def _build_scheduler(self, cfg: Any) -> torch.optim.lr_scheduler.LRScheduler | None:
         """Create an LR scheduler with optional linear warmup."""
         if cfg.lr_scheduler is None:
             return None
@@ -154,14 +146,10 @@ class DistillationTrainer:
                     schedulers=[warmup, cosine],
                     milestones=[warmup_epochs],
                 )
-            return torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer, T_max=total_epochs
-            )
+            return torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=total_epochs)
 
         if cfg.lr_scheduler == "step":
-            return torch.optim.lr_scheduler.StepLR(
-                self.optimizer, step_size=30, gamma=0.1
-            )
+            return torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=30, gamma=0.1)
 
         logger.warning("Unknown lr_scheduler %r, disabling.", cfg.lr_scheduler)
         return None
@@ -211,9 +199,7 @@ class DistillationTrainer:
         grad_clip = getattr(self.training_cfg, "gradient_clip", None)
 
         progress = (
-            tqdm(train_loader, desc="train", leave=False)
-            if is_main_process()
-            else train_loader
+            tqdm(train_loader, desc="train", leave=False) if is_main_process() else train_loader
         )
 
         for images, _ in progress:
@@ -229,9 +215,7 @@ class DistillationTrainer:
             loss.backward()
 
             if grad_clip is not None:
-                nn.utils.clip_grad_norm_(
-                    self._unwrapped_model().parameters(), grad_clip
-                )
+                nn.utils.clip_grad_norm_(self._unwrapped_model().parameters(), grad_clip)
 
             self.optimizer.step()
             loss_meter.update(loss.item(), images.size(0))
@@ -374,10 +358,7 @@ class DistillationTrainer:
                 elif val_loss is not None:
                     self.patience_counter += 1
 
-                if (
-                    patience is not None
-                    and self.patience_counter >= patience
-                ):
+                if patience is not None and self.patience_counter >= patience:
                     logger.info(
                         "Early stopping at epoch %d (patience=%d).",
                         epoch + 1,
