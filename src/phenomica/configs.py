@@ -68,7 +68,7 @@ class TrainingConfig:
     lr_scheduler: Optional[Literal["cosine", "step"]] = "cosine"
     warmup_epochs: NonNegativeInt = 5
     warmup_start_factor: PositiveFloat = 1e-4
-    gradient_clip: Optional[float] = 1.0
+    gradient_clip: Optional[PositiveFloat] = 1.0
     loss_type: Literal["mse", "cosine", "combined"] = "mse"
     cosine_weight: NonNegativeFloat = 1.0
     mse_weight: NonNegativeFloat = 1.0
