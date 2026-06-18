@@ -6,6 +6,7 @@ tracking, following the pattern from txam-training.
 
 from __future__ import annotations
 
+import inspect
 from typing import Callable
 
 import torch
@@ -33,15 +34,41 @@ def register_loss(name: str) -> Callable[[type[nn.Module]], type[nn.Module]]:
     return decorator
 
 
+def _filter_kwargs(target_cls: type, kwargs: dict) -> dict:
+    """Filter kwargs to only those accepted by target_cls.__init__.
+
+    If the constructor accepts **kwargs (VAR_KEYWORD), pass everything.
+    Otherwise, pass only kwargs whose names match constructor parameters.
+
+    Args:
+        target_cls: The class whose __init__ to inspect.
+        kwargs: Candidate keyword arguments.
+
+    Returns:
+        Filtered kwargs dict safe for target_cls(**filtered).
+    """
+    sig = inspect.signature(target_cls.__init__)
+    # Check if __init__ accepts **kwargs
+    has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    if has_var_keyword:
+        return kwargs
+
+    # Filter to declared parameters (excluding 'self')
+    valid_params = {name for name in sig.parameters if name != "self"}
+    return {k: v for k, v in kwargs.items() if k in valid_params}
+
+
 def build_loss(loss_type: str, **kwargs) -> nn.Module:
     """Factory to construct a loss module by type name.
 
     Preserves existing behavior for "mse"/"cosine"/"combined" (mapped to
     DistillationLoss) and constructs registered losses from LOSS_REGISTRY.
+    Filters kwargs to only those accepted by the target constructor, allowing
+    a superset of hyperparams to be passed safely.
 
     Args:
         loss_type: Loss identifier (e.g., "mse", "cospress", "vitkd").
-        **kwargs: Arguments forwarded to the loss constructor.
+        **kwargs: Superset of hyperparams; filtered to target constructor signature.
 
     Returns:
         Instantiated loss module.
@@ -51,11 +78,14 @@ def build_loss(loss_type: str, **kwargs) -> nn.Module:
     """
     # Existing builtin types map to DistillationLoss
     if loss_type in ("mse", "cosine", "combined"):
-        return DistillationLoss(loss_type=loss_type, **kwargs)
+        filtered = _filter_kwargs(DistillationLoss, kwargs)
+        return DistillationLoss(loss_type=loss_type, **filtered)
 
     # Registered custom losses
     if loss_type in LOSS_REGISTRY:
-        return LOSS_REGISTRY[loss_type](**kwargs)
+        target_cls = LOSS_REGISTRY[loss_type]
+        filtered = _filter_kwargs(target_cls, kwargs)
+        return target_cls(**filtered)
 
     # Unknown type
     known = ["mse", "cosine", "combined"] + list(LOSS_REGISTRY.keys())
