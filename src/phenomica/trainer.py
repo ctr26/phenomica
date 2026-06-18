@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import pathlib
 from typing import Any
@@ -90,7 +91,7 @@ class DistillationTrainer:
                 if dataclasses.is_dataclass(training_cfg):
                     loss_kwargs = dataclasses.asdict(training_cfg)
                 else:
-                    loss_kwargs = vars(training_cfg)
+                    loss_kwargs = dict(vars(training_cfg))
 
             # Remove loss_type from kwargs (passed positionally)
             loss_kwargs.pop("loss_type", None)
@@ -125,16 +126,22 @@ class DistillationTrainer:
     # ------------------------------------------------------------------
 
     def _build_optimizer(self, cfg: Any) -> torch.optim.Optimizer:
-        """Create the optimiser from config."""
+        """Create the optimiser from config.
+
+        Optimizes both student and criterion parameters (for parametric losses).
+        """
         student = self._unwrapped_model()
+        # Include both student and criterion params (criterion may have learnable params)
+        params = itertools.chain(student.parameters(), self.criterion.parameters())
+
         if cfg.optimizer == "adamw":
             return torch.optim.AdamW(
-                student.parameters(),
+                params,
                 lr=cfg.learning_rate,
                 weight_decay=cfg.weight_decay,
             )
         return torch.optim.Adam(
-            student.parameters(),
+            params,
             lr=cfg.learning_rate,
             weight_decay=cfg.weight_decay,
         )

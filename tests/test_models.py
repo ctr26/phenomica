@@ -335,3 +335,105 @@ def test_build_loss_existing_types_with_superset():
     assert isinstance(loss_combined, DistillationLoss)
     assert loss_combined.mse_weight == 0.7
     assert loss_combined.cosine_weight == 0.3
+
+
+def test_optimizer_includes_criterion_parameters():
+    """Test optimizer includes both student and criterion parameters."""
+    from types import SimpleNamespace
+
+    import torch.nn as nn
+
+    from phenomica.losses import register_loss
+    from phenomica.trainer import DistillationTrainer
+
+    # Register a parametric loss
+    @register_loss("test_parametric")
+    class ParametricLoss(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.projection = nn.Linear(768, 384)  # learnable params
+
+        def forward(self, student_output, teacher_outputs):
+            return torch.tensor(0.0)
+
+    # Build trainer with parametric loss
+    training_cfg = SimpleNamespace(
+        epochs=1,
+        batch_size=2,
+        learning_rate=1e-3,
+        weight_decay=1e-4,
+        optimizer="adamw",
+        lr_scheduler=None,
+        gradient_clip=None,
+        loss_type="test_parametric",
+        use_wandb=False,
+        seed=42,
+        use_ddp=False,
+    )
+    model_cfg = SimpleNamespace(
+        variant="simple",
+        backbone="resnet18",
+        projection_dim=768,
+        pretrained_backbone=False,
+    )
+    teacher_cfg = SimpleNamespace(model_name="dinov2_vitb14", embed_dim=768)
+    data_cfg = SimpleNamespace(dataset="imagenet", img_size=224)
+
+    trainer = DistillationTrainer(training_cfg, model_cfg, teacher_cfg, data_cfg)
+
+    # Check optimizer includes criterion params
+    optimizer = trainer.optimizer
+    all_params = []
+    for group in optimizer.param_groups:
+        all_params.extend(group["params"])
+
+    # Find the projection layer's weight param
+    criterion_weight = trainer.criterion.projection.weight
+    assert any(p is criterion_weight for p in all_params), (
+        "Criterion's learnable parameters must be in optimizer"
+    )
+
+
+def test_optimizer_paramfree_loss_unchanged():
+    """Test param-free losses don't change optimizer param count."""
+    from types import SimpleNamespace
+
+    from phenomica.trainer import DistillationTrainer
+
+    # Build trainer with param-free loss (mse)
+    training_cfg = SimpleNamespace(
+        epochs=1,
+        batch_size=2,
+        learning_rate=1e-3,
+        weight_decay=1e-4,
+        optimizer="adamw",
+        lr_scheduler=None,
+        gradient_clip=None,
+        loss_type="mse",
+        mse_weight=1.0,
+        cosine_weight=1.0,
+        use_wandb=False,
+        seed=42,
+        use_ddp=False,
+    )
+    model_cfg = SimpleNamespace(
+        variant="simple",
+        backbone="resnet18",
+        projection_dim=768,
+        pretrained_backbone=False,
+    )
+    teacher_cfg = SimpleNamespace(model_name="dinov2_vitb14", embed_dim=768)
+    data_cfg = SimpleNamespace(dataset="imagenet", img_size=224)
+
+    trainer = DistillationTrainer(training_cfg, model_cfg, teacher_cfg, data_cfg)
+
+    # Optimizer should have only student params (criterion has none)
+    optimizer = trainer.optimizer
+    all_params = []
+    for group in optimizer.param_groups:
+        all_params.extend(group["params"])
+
+    # Count should match student params only
+    student = trainer._unwrapped_model()
+    student_param_count = sum(1 for _ in student.parameters())
+    assert len(all_params) == student_param_count
