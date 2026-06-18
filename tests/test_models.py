@@ -279,3 +279,59 @@ def test_fake_teacher_extended_outputs():
         # num_heads (typically 12 for vitb14)
         assert attn_map.ndim == 3
         assert attn_map.shape[2] == 256  # N patches
+
+
+def test_build_loss_filters_kwargs():
+    """Test build_loss filters kwargs to target constructor signature."""
+    import torch.nn as nn
+
+    from phenomica.losses import build_loss, register_loss
+
+    # Register a loss with custom params
+    @register_loss("test_filtered")
+    class FilteredLoss(nn.Module):
+        def __init__(self, temperature: float = 1.0, alpha: float = 0.5):
+            super().__init__()
+            self.temperature = temperature
+            self.alpha = alpha
+
+        def forward(self, student_output, teacher_outputs):
+            return torch.tensor(0.0)
+
+    # Pass superset including unrelated config fields
+    superset_kwargs = {
+        "temperature": 2.0,
+        "alpha": 0.8,
+        "epochs": 100,  # unrelated
+        "mse_weight": 1.0,  # unrelated
+        "learning_rate": 0.001,  # unrelated
+    }
+
+    loss = build_loss("test_filtered", **superset_kwargs)
+    assert isinstance(loss, FilteredLoss)
+    assert loss.temperature == 2.0
+    assert loss.alpha == 0.8
+
+
+def test_build_loss_existing_types_with_superset():
+    """Test existing loss types still work with superset kwargs."""
+    from phenomica.losses import DistillationLoss, build_loss
+
+    # Pass superset including fields for all loss types
+    superset_kwargs = {
+        "mse_weight": 0.7,
+        "cosine_weight": 0.3,
+        "cospress_weight": 1.0,  # unrelated to DistillationLoss
+        "vitkd_weight": 1.0,  # unrelated
+        "epochs": 50,  # unrelated
+    }
+
+    loss_mse = build_loss("mse", **superset_kwargs)
+    assert isinstance(loss_mse, DistillationLoss)
+    assert loss_mse.loss_type == "mse"
+    assert loss_mse.mse_weight == 0.7
+
+    loss_combined = build_loss("combined", **superset_kwargs)
+    assert isinstance(loss_combined, DistillationLoss)
+    assert loss_combined.mse_weight == 0.7
+    assert loss_combined.cosine_weight == 0.3
