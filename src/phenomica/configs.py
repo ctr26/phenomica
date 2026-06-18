@@ -69,9 +69,15 @@ class TrainingConfig:
     warmup_epochs: NonNegativeInt = 5
     warmup_start_factor: PositiveFloat = 1e-4
     gradient_clip: Optional[PositiveFloat] = 1.0
-    loss_type: Literal["mse", "cosine", "combined"] = "mse"
+    loss_type: Literal["mse", "cosine", "combined", "cospress", "vitkd", "attndistill", "rekd"] = (
+        "mse"
+    )
     cosine_weight: NonNegativeFloat = 1.0
     mse_weight: NonNegativeFloat = 1.0
+    cospress_weight: NonNegativeFloat = 1.0
+    vitkd_weight: NonNegativeFloat = 1.0
+    attndistill_weight: NonNegativeFloat = 1.0
+    rekd_weight: NonNegativeFloat = 1.0
     use_wandb: bool = True
     wandb_project: str = "phenomica"
     wandb_run_name: Optional[str] = None
@@ -129,18 +135,28 @@ def register_configs() -> None:
 
     _preset(TeacherConfig, "teacher", "dinov2_base")
     _preset(
-        TeacherConfig, "teacher", "dinov2_small",
-        model_name="dinov2_vits14", embed_dim=384,
+        TeacherConfig,
+        "teacher",
+        "dinov2_small",
+        model_name="dinov2_vits14",
+        embed_dim=384,
     )
     _preset(
-        TeacherConfig, "teacher", "dinov2_large",
-        model_name="dinov2_vitl14", embed_dim=1024,
+        TeacherConfig,
+        "teacher",
+        "dinov2_large",
+        model_name="dinov2_vitl14",
+        embed_dim=1024,
     )
 
     _preset(DataConfig, "data", "imagenet", root="data/imagenet")
     _preset(
-        DataConfig, "data", "custom",
-        root="data/custom", batch_size=128, num_workers=4,
+        DataConfig,
+        "data",
+        "custom",
+        root="data/custom",
+        batch_size=128,
+        num_workers=4,
     )
 
     _preset(TrainingConfig, "training", "default")
