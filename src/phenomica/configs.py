@@ -1,41 +1,20 @@
-"""Hydra structured config schemas and ConfigStore registration.
+"""Hydra structured config schemas and hydra-zen store registration.
 
 Defines typed dataclass schemas for all config groups, then registers
-preset instances into Hydra's ConfigStore. No YAML files needed.
+preset instances via hydra-zen store using builds().
+
+Pydantic types (Literal, PositiveInt, PositiveFloat) are used in type
+annotations for validation via pydantic_parser at instantiation.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
-from hydra.core.config_store import ConfigStore
+from hydra_zen import builds, store
 from omegaconf import MISSING
-
-# -- Enums -------------------------------------------------------------------
-
-
-class ModelVariant(str, Enum):
-    SIMPLE = "simple"
-    MULTIFUNCTION = "multifunction"
-
-
-class LossType(str, Enum):
-    MSE = "mse"
-    COSINE = "cosine"
-    COMBINED = "combined"
-
-
-class Optimizer(str, Enum):
-    ADAM = "adam"
-    ADAMW = "adamw"
-
-
-class LRScheduler(str, Enum):
-    COSINE = "cosine"
-    STEP = "step"
-
-
-# -- Schemas -----------------------------------------------------------------
+from pydantic import PositiveFloat, PositiveInt
 
 
 @dataclass
@@ -46,45 +25,45 @@ class ModelConfig:
     are used. For variant="multifunction", the teacher_* fields are also used.
     """
 
-    variant: str = ModelVariant.SIMPLE
+    variant: Literal["simple", "multifunction"] = "simple"
     backbone: str = "resnet18"
     pretrained_backbone: bool = True
     # Simple variant fields
-    projection_dim: int = 768
+    projection_dim: PositiveInt = 768
     # Multi-function variant fields
-    teacher_cls_dim: int = 768
-    teacher_patch_dim: int = 768
+    teacher_cls_dim: PositiveInt = 768
+    teacher_patch_dim: PositiveInt = 768
     teacher_layers: list[int] = field(default_factory=lambda: [3, 6, 9, 11])
 
 
 @dataclass
 class TeacherConfig:
     model_name: str = "dinov2_vitb14"
-    embed_dim: int = 768
+    embed_dim: PositiveInt = 768
 
 
 @dataclass
 class DataConfig:
     dataset_type: str = "imagefolder"
     root: str = MISSING
-    image_size: int = 224
-    batch_size: int = 256
-    num_workers: int = 8
+    image_size: PositiveInt = 224
+    batch_size: PositiveInt = 256
+    num_workers: PositiveInt = 8
     pin_memory: bool = True
     val_split: float = 0.1
 
 
 @dataclass
 class TrainingConfig:
-    epochs: int = 100
-    learning_rate: float = 1e-3
-    weight_decay: float = 1e-4
-    optimizer: str = Optimizer.ADAMW
-    lr_scheduler: Optional[str] = LRScheduler.COSINE
-    warmup_epochs: int = 5
-    warmup_start_factor: float = 1e-4
+    epochs: PositiveInt = 100
+    learning_rate: PositiveFloat = 1e-3
+    weight_decay: PositiveFloat = 1e-4
+    optimizer: Literal["adam", "adamw"] = "adamw"
+    lr_scheduler: Optional[Literal["cosine", "step"]] = "cosine"
+    warmup_epochs: PositiveInt = 5
+    warmup_start_factor: PositiveFloat = 1e-4
     gradient_clip: Optional[float] = 1.0
-    loss_type: str = LossType.MSE
+    loss_type: Literal["mse", "cosine", "combined"] = "mse"
     cosine_weight: float = 1.0
     mse_weight: float = 1.0
     use_wandb: bool = True
@@ -102,104 +81,136 @@ class TrainingConfig:
 class ClusterConfig:
     use_submitit: bool = False
     partition: str = "hopper"
-    gpus_per_node: int = 4
-    nodes: int = 1
-    timeout_min: int = 720
-    mem_gb: int = 64
-    cpus_per_task: int = 8
+    gpus_per_node: PositiveInt = 4
+    nodes: PositiveInt = 1
+    timeout_min: PositiveInt = 720
+    mem_gb: PositiveInt = 64
+    cpus_per_task: PositiveInt = 8
     slurm_account: Optional[str] = None
     log_dir: str = "slurm_logs"
 
 
-@dataclass
-class PhenomicaConfig:
-    defaults: list = field(
-        default_factory=lambda: [
-            "_self_",
-            {"model": "simple_resnet18"},
-            {"teacher": "dinov2_base"},
-            {"data": "imagenet"},
-            {"training": "default"},
-            {"cluster": "local"},
-        ]
-    )
-    model: ModelConfig = field(default_factory=ModelConfig)
-    teacher: TeacherConfig = field(default_factory=TeacherConfig)
-    data: DataConfig = field(default_factory=DataConfig)
-    training: TrainingConfig = field(default_factory=TrainingConfig)
-    cluster: ClusterConfig = field(default_factory=ClusterConfig)
-
-
-# -- ConfigStore registration ------------------------------------------------
+# -- hydra-zen store registration --------------------------------------------
 
 
 def register_configs() -> None:
-    """Register all config schemas and presets into Hydra's ConfigStore."""
-    cs = ConfigStore.instance()
-
-    # Top-level schema
-    cs.store(name="phenomica", node=PhenomicaConfig)
-
+    """Register all config schemas and presets into hydra-zen store."""
     # -- Model presets -------------------------------------------------------
-    cs.store(group="model", name="simple_resnet18", node=ModelConfig())
-    cs.store(
-        group="model", name="simple_effnet",
-        node=ModelConfig(backbone="efficientnet_b0"),
+    store(
+        builds(ModelConfig, populate_full_signature=True),
+        group="model",
+        name="simple_resnet18",
     )
-    cs.store(
-        group="model", name="simple_vit_tiny",
-        node=ModelConfig(backbone="vit_tiny_patch16_224"),
+    store(
+        builds(ModelConfig, backbone="efficientnet_b0", populate_full_signature=True),
+        group="model",
+        name="simple_effnet",
     )
-    cs.store(
-        group="model", name="multi_resnet18",
-        node=ModelConfig(variant=ModelVariant.MULTIFUNCTION),
-    )
-    cs.store(
-        group="model", name="multi_effnet",
-        node=ModelConfig(
-            variant=ModelVariant.MULTIFUNCTION, backbone="efficientnet_b0",
+    store(
+        builds(
+            ModelConfig, backbone="vit_tiny_patch16_224", populate_full_signature=True
         ),
+        group="model",
+        name="simple_vit_tiny",
+    )
+    store(
+        builds(ModelConfig, variant="multifunction", populate_full_signature=True),
+        group="model",
+        name="multi_resnet18",
+    )
+    store(
+        builds(
+            ModelConfig,
+            variant="multifunction",
+            backbone="efficientnet_b0",
+            populate_full_signature=True,
+        ),
+        group="model",
+        name="multi_effnet",
     )
 
     # -- Teacher presets -----------------------------------------------------
-    cs.store(group="teacher", name="dinov2_base", node=TeacherConfig())
-    cs.store(
-        group="teacher", name="dinov2_small",
-        node=TeacherConfig(model_name="dinov2_vits14", embed_dim=384),
+    store(
+        builds(TeacherConfig, populate_full_signature=True),
+        group="teacher",
+        name="dinov2_base",
     )
-    cs.store(
-        group="teacher", name="dinov2_large",
-        node=TeacherConfig(model_name="dinov2_vitl14", embed_dim=1024),
+    store(
+        builds(
+            TeacherConfig,
+            model_name="dinov2_vits14",
+            embed_dim=384,
+            populate_full_signature=True,
+        ),
+        group="teacher",
+        name="dinov2_small",
+    )
+    store(
+        builds(
+            TeacherConfig,
+            model_name="dinov2_vitl14",
+            embed_dim=1024,
+            populate_full_signature=True,
+        ),
+        group="teacher",
+        name="dinov2_large",
     )
 
     # -- Data presets --------------------------------------------------------
-    cs.store(
-        group="data", name="imagenet",
-        node=DataConfig(root="data/imagenet"),
+    store(
+        builds(DataConfig, root="data/imagenet", populate_full_signature=True),
+        group="data",
+        name="imagenet",
     )
-    cs.store(
-        group="data", name="custom",
-        node=DataConfig(root="data/custom", batch_size=128, num_workers=4),
+    store(
+        builds(
+            DataConfig,
+            root="data/custom",
+            batch_size=128,
+            num_workers=4,
+            populate_full_signature=True,
+        ),
+        group="data",
+        name="custom",
     )
 
     # -- Training presets ----------------------------------------------------
-    cs.store(group="training", name="default", node=TrainingConfig())
-    cs.store(
-        group="training", name="debug",
-        node=TrainingConfig(
-            epochs=10, weight_decay=0.0, optimizer=Optimizer.ADAM,
-            lr_scheduler=None, warmup_epochs=0, gradient_clip=None,
-            use_wandb=False, use_ddp=False,
-            early_stopping_patience=None, eval_freq=5,
+    store(
+        builds(TrainingConfig, populate_full_signature=True),
+        group="training",
+        name="default",
+    )
+    store(
+        builds(
+            TrainingConfig,
+            epochs=10,
+            weight_decay=0.0,
+            optimizer="adam",
+            lr_scheduler=None,
+            warmup_epochs=0,
+            gradient_clip=None,
+            use_wandb=False,
+            use_ddp=False,
+            early_stopping_patience=None,
+            eval_freq=5,
+            populate_full_signature=True,
         ),
+        group="training",
+        name="debug",
     )
 
     # -- Cluster presets -----------------------------------------------------
-    cs.store(group="cluster", name="local", node=ClusterConfig())
-    cs.store(
-        group="cluster", name="biohive",
-        node=ClusterConfig(use_submitit=True),
+    store(
+        builds(ClusterConfig, populate_full_signature=True),
+        group="cluster",
+        name="local",
+    )
+    store(
+        builds(ClusterConfig, use_submitit=True, populate_full_signature=True),
+        group="cluster",
+        name="biohive",
     )
 
 
 register_configs()
+store.add_to_hydra_store()
