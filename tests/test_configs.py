@@ -179,3 +179,41 @@ def test_all_presets_instantiate(group: str, name: str) -> None:
     with initialize(version_base="1.3", config_path=None):
         cfg = compose(config_name="phenomica", overrides=[f"{group}={name}"])
     instantiate(getattr(cfg, group), _target_wrapper_=pydantic_parser)
+
+
+def test_multifunction_variant_trains() -> None:
+    """Multifunction variant builds and runs a train step end-to-end.
+
+    Exercises the multi-head model, ``extract_layers`` wiring, and
+    ``MultiFunctionDistillationLoss`` path that the schema-only tests skip.
+    """
+    import math
+    from types import SimpleNamespace
+
+    from torch.utils.data import DataLoader, TensorDataset
+
+    data_cfg = SimpleNamespace(
+        dataset_type="imagefolder",
+        root="data/dummy",
+        image_size=224,
+        batch_size=2,
+        num_workers=0,
+        pin_memory=False,
+        val_split=0.1,
+    )
+    trainer = DistillationTrainer(
+        training_cfg=TrainingConfig(
+            use_wandb=False, use_ddp=False, warmup_epochs=0, lr_scheduler=None
+        ),
+        model_cfg=ModelConfig(variant="multifunction", pretrained_backbone=False),
+        teacher_cfg=TeacherConfig(),
+        data_cfg=data_cfg,
+    )
+    loader = DataLoader(
+        TensorDataset(
+            torch.randn(4, 3, 224, 224), torch.zeros(4, dtype=torch.long)
+        ),
+        batch_size=2,
+    )
+    avg_loss = trainer.train_epoch(loader)
+    assert math.isfinite(avg_loss)
