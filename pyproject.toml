@@ -45,3 +45,9 @@ select = ["E", "F", "I", "W"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "torch>=2.12.1",
+    "torchvision>=0.27.1",
+]
