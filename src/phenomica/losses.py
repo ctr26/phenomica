@@ -7,11 +7,14 @@ tracking, following the pattern from txam-training.
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Callable
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+logger = logging.getLogger(__name__)
 
 # Loss registry for extensible loss types
 LOSS_REGISTRY: dict[str, type[nn.Module]] = {}
@@ -235,9 +238,104 @@ class MultiFunctionDistillationLoss(nn.Module):
         return total
 
 
+@register_loss("cospress")
+class CosPressLoss(nn.Module):
+    """CosPress: Preserves pairwise cosine-similarity structure from teacher.
+
+    Based on "Preserving Angles Improves Feature Distillation of Foundation Models"
+    (arxiv 2411.15239). Uses relational KL divergence over normalized similarity
+    matrices plus optional direct cosine term.
+
+    Args:
+        cospress_weight: Weight for the KL divergence term.
+        cospress_temperature: Temperature for softmax over similarity matrices.
+        cospress_cosine_weight: Weight for direct cosine similarity term
+            (only applied when student and teacher have matching dimensions).
+    """
+
+    def __init__(
+        self,
+        cospress_weight: float = 1.0,
+        cospress_temperature: float = 0.1,
+        cospress_cosine_weight: float = 1.0,
+    ) -> None:
+        super().__init__()
+        self.cospress_weight = cospress_weight
+        self.cospress_temperature = cospress_temperature
+        self.cospress_cosine_weight = cospress_cosine_weight
+        self._last_loss_metrics: dict[str, float] = {}
+        self._dim_mismatch_logged = False
+
+    def forward(
+        self,
+        student_output: torch.Tensor,
+        teacher_outputs: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Compute CosPress loss between student and teacher CLS embeddings.
+
+        Args:
+            student_output: [B, D_student] student embeddings.
+            teacher_outputs: Dict containing "cls" key with [B, D_teacher] embeddings.
+
+        Returns:
+            Scalar loss tensor.
+        """
+        teacher_cls = teacher_outputs["cls"]
+        batch_size = student_output.size(0)
+
+        # Normalize embeddings to unit sphere
+        student_norm = F.normalize(student_output, dim=-1)
+        teacher_norm = F.normalize(teacher_cls, dim=-1)
+
+        # Compute similarity matrices [B, B]
+        sim_student = student_norm @ student_norm.T
+        sim_teacher = teacher_norm @ teacher_norm.T
+
+        # Mask diagonal (self-similarity) to -inf for softmax
+        mask = torch.eye(batch_size, device=student_output.device, dtype=torch.bool)
+        sim_student_masked = sim_student.masked_fill(mask, float("-inf"))
+        sim_teacher_masked = sim_teacher.masked_fill(mask, float("-inf"))
+
+        # Convert to distributions with temperature
+        # Teacher probabilities (target)
+        teacher_probs = F.softmax(sim_teacher_masked / self.cospress_temperature, dim=-1)
+        # Student log-probabilities
+        student_log_probs = F.log_softmax(sim_student_masked / self.cospress_temperature, dim=-1)
+
+        # KL divergence: KL(teacher || student), averaged over batch
+        loss_kl = F.kl_div(student_log_probs, teacher_probs, reduction="batchmean")
+
+        # Optional direct cosine term (only if dimensions match)
+        if student_output.shape[-1] == teacher_cls.shape[-1]:
+            cos_sim = F.cosine_similarity(student_output, teacher_cls, dim=-1)
+            loss_cosine = (1.0 - cos_sim).mean()
+            cosine_val = loss_cosine.item()
+        else:
+            if not self._dim_mismatch_logged:
+                logger.info(
+                    f"CosPressLoss: dimension mismatch (student {student_output.shape[-1]} "
+                    f"vs teacher {teacher_cls.shape[-1]}), skipping cosine term"
+                )
+                self._dim_mismatch_logged = True
+            loss_cosine = torch.tensor(0.0, device=student_output.device)
+            cosine_val = 0.0
+
+        # Total loss
+        total = self.cospress_weight * loss_kl + self.cospress_cosine_weight * loss_cosine
+
+        self._last_loss_metrics = {
+            "cospress_kl": loss_kl.item(),
+            "cospress_cosine": cosine_val,
+            "total": total.item(),
+        }
+
+        return total
+
+
 __all__ = [
     "DistillationLoss",
     "MultiFunctionDistillationLoss",
+    "CosPressLoss",
     "LOSS_REGISTRY",
     "register_loss",
     "build_loss",

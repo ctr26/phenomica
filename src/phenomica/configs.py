@@ -75,6 +75,8 @@ class TrainingConfig:
     cosine_weight: NonNegativeFloat = 1.0
     mse_weight: NonNegativeFloat = 1.0
     cospress_weight: NonNegativeFloat = 1.0
+    cospress_temperature: PositiveFloat = 0.1
+    cospress_cosine_weight: NonNegativeFloat = 1.0
     vitkd_weight: NonNegativeFloat = 1.0
     attndistill_weight: NonNegativeFloat = 1.0
     rekd_weight: NonNegativeFloat = 1.0
@@ -175,6 +177,7 @@ def register_configs() -> None:
         early_stopping_patience=None,
         eval_freq=5,
     )
+    _preset(TrainingConfig, "training", "cospress", loss_type="cospress")
 
     _preset(ClusterConfig, "cluster", "local")
     _preset(ClusterConfig, "cluster", "biohive", use_submitit=True)

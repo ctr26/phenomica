@@ -437,3 +437,96 @@ def test_optimizer_paramfree_loss_unchanged():
     student = trainer._unwrapped_model()
     student_param_count = sum(1 for _ in student.parameters())
     assert len(all_params) == student_param_count
+
+
+def test_cospress_loss_forward_returns_scalar():
+    """Test CosPressLoss forward returns a scalar."""
+    from phenomica.losses import CosPressLoss
+
+    loss_fn = CosPressLoss(cospress_weight=1.0, cospress_temperature=0.1)
+    student = torch.randn(4, 768)
+    teacher_outputs = {"cls": torch.randn(4, 768)}
+    loss = loss_fn(student, teacher_outputs)
+    assert loss.shape == ()
+    assert loss.ndim == 0
+
+
+def test_cospress_loss_metrics():
+    """Test CosPressLoss populates _last_loss_metrics with required keys."""
+    from phenomica.losses import CosPressLoss
+
+    loss_fn = CosPressLoss(cospress_weight=1.0, cospress_temperature=0.1)
+    student = torch.randn(4, 768)
+    teacher_outputs = {"cls": torch.randn(4, 768)}
+    _ = loss_fn(student, teacher_outputs)
+
+    assert hasattr(loss_fn, "_last_loss_metrics")
+    metrics = loss_fn._last_loss_metrics
+    assert "cospress_kl" in metrics
+    assert "cospress_cosine" in metrics
+    assert "total" in metrics
+    assert isinstance(metrics["cospress_kl"], float)
+    assert isinstance(metrics["cospress_cosine"], float)
+    assert isinstance(metrics["total"], float)
+
+
+def test_cospress_loss_gradient_flow():
+    """Test gradients flow through CosPressLoss."""
+    from phenomica.losses import CosPressLoss
+
+    loss_fn = CosPressLoss(cospress_weight=1.0, cospress_temperature=0.1)
+    student = torch.randn(4, 768, requires_grad=True)
+    teacher_outputs = {"cls": torch.randn(4, 768)}
+    loss = loss_fn(student, teacher_outputs)
+    loss.backward()
+    assert student.grad is not None
+    assert student.grad.shape == student.shape
+
+
+def test_cospress_loss_dim_mismatch():
+    """Test CosPressLoss handles dimension mismatch (skips cosine term)."""
+    from phenomica.losses import CosPressLoss
+
+    loss_fn = CosPressLoss(
+        cospress_weight=1.0, cospress_temperature=0.1, cospress_cosine_weight=0.5
+    )
+    student = torch.randn(4, 128)  # Different dim
+    teacher_outputs = {"cls": torch.randn(4, 768)}
+    loss = loss_fn(student, teacher_outputs)
+
+    # Should still work (KL term is dim-agnostic)
+    assert loss.shape == ()
+    metrics = loss_fn._last_loss_metrics
+    # Cosine term should be 0.0 due to dim mismatch
+    assert metrics["cospress_cosine"] == 0.0
+
+
+def test_build_loss_cospress():
+    """Test build_loss constructs CosPressLoss with filtered kwargs."""
+    from phenomica.losses import CosPressLoss, build_loss
+
+    loss = build_loss(
+        "cospress",
+        cospress_weight=1.0,
+        cospress_temperature=0.2,
+        cospress_cosine_weight=0.5,
+        epochs=100,  # unrelated, should be filtered out
+    )
+    assert isinstance(loss, CosPressLoss)
+    assert loss.cospress_weight == 1.0
+    assert loss.cospress_temperature == 0.2
+    assert loss.cospress_cosine_weight == 0.5
+
+
+def test_cospress_preset_exists():
+    """Test 'cospress' preset is registered in hydra-zen store."""
+    # Import triggers register_configs() via module-level call
+    from hydra_zen import store as zen_store
+
+    from phenomica.configs import register_configs  # noqa: F401
+
+    # Check if cospress preset exists in training group
+    # Access via the store's public interface
+    assert "training" in zen_store, "training group should exist in store"
+    training_keys = zen_store["training"].keys()
+    assert ("training", "cospress") in training_keys, "cospress preset should be in training group"
