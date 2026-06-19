@@ -4,9 +4,10 @@ The Ray stack (Ray Data + Ray Train + Ray Tune) is added as an **independent
 launch path** alongside the existing submitit/Hydra path. Neither path imports
 the other; they share the model/loss/teacher/eval/config building blocks.
 
-This document is the fixed-interface spec the build workers implement against.
-At scaffold stage every Ray function body raises `NotImplementedError`; the
-signatures, config schemas, and wiring below are final.
+This document is the implemented-interface reference for the Ray path: the
+config schemas, module signatures, console scripts, and justfile targets below
+are all live. Run the two paths via `just` (`ray-train-local` / `ray-tune-local`)
+or the console scripts directly.
 
 ## Two independent launch paths
 
@@ -19,8 +20,9 @@ signatures, config schemas, and wiring below are final.
 | Sweeps | Hydra `--multirun` + submitit launcher | `ray.tune.Tuner` + `ASHAScheduler` |
 | Scheduler target | SLURM (BioHive `hopper` partition) | Ray cluster (or local) |
 
-`train.py` is **not touched** by the Ray work. The submitit path and its
-46-test suite remain the source of truth for the torch flow.
+`train.py` is **not touched** by the Ray work. The submitit path remains the
+source of truth for the torch flow; the Ray modules add their own CPU-local
+tests on top of the original 46-test suite.
 
 ## Shared (reused, unchanged) building blocks
 
@@ -107,9 +109,15 @@ def run_ray_train(
   (and `"val"`);
 - `TorchTrainer(train_fn, train_loop_config={...serialized cfgs...},`
   `scaling_config=ScalingConfig(num_workers, use_gpu, resources_per_worker={"CPU": ..., "GPU": ...}),`
-  `datasets={"train": train_ds, "validation": val_ds},`
-  `run_config=RunConfig(storage_path=..., callbacks=[WandbLoggerCallback(project=...)] if training_cfg.use_wandb else []))`;
+  `datasets={"train": train_ds, "val": val_ds},`
+  `run_config=RunConfig(storage_path=..., callbacks=[wandb UserCallback] if training_cfg.use_wandb else []))`;
 - return `trainer.fit()`.
+
+W&B note (Ray Train **v2**): `RunConfig.callbacks` accepts only
+`ray.train.UserCallback` subclasses, so the run logs via a small driver-side
+`UserCallback` (one rank-0 `wandb.init`, then `.log` per reported metrics),
+**not** the legacy Tune `WandbLoggerCallback`. `Result.metrics` is populated
+only when a checkpoint is reported, so rank 0 reports a checkpoint each epoch.
 
 ### `phenomica.ray_tune`
 
@@ -124,13 +132,22 @@ def run_ray_tune(
 
 - `build_search_space` -> `{"train_loop_config": {"lr": tune.loguniform(lr_min, lr_max),
   "weight_decay": tune.loguniform(wd_min, wd_max), "loss_type": tune.choice(loss_types)}}`.
-- "Tune over Train" pattern (Ray 2.55): the per-trial `TorchTrainer` is built
-  the same way as `run_ray_train`; `Tuner(trainer, param_space=build_search_space(...),`
+- "Tune over Train" pattern (Ray **v2**, 2.55): the legacy
+  `Tuner(trainer_instance, ...)` API was deprecated in 2.43 and is rejected by
+  Train v2, so the Tuner trainable is a **driver function** that builds the
+  per-trial `TorchTrainer` itself (same shape as `run_ray_train`). The shared
+  base `train_loop_config` and the Ray Data shards are injected via
+  `tune.with_parameters` so they are not part of the search space.
+- `Tuner(driver, param_space=build_search_space(...),`
   `tune_config=TuneConfig(metric=ray_tune_cfg.metric, mode=ray_tune_cfg.mode,`
   `num_samples=..., max_concurrent_trials=...,`
   `scheduler=ASHAScheduler(grace_period=..., max_t=..., reduction_factor=...)),`
   `run_config=RunConfig(callbacks=[WandbLoggerCallback(...)] if use_wandb else []))`;
   return `tuner.fit()`.
+- Two callback layers bridge the libraries: a Train `TuneReportCallback`
+  (`ray.tune.integration.ray_train`) on the **inner** trainer propagates worker
+  `ray.train.report` metrics up to ASHA; the Tune `WandbLoggerCallback`
+  (`ray.air.integrations.wandb`) on the **Tuner** logs each trial (opt-in).
 
 ### `phenomica.ray_launch`
 
@@ -141,9 +158,17 @@ def ray_tune_main(cfg: DictConfig) -> None: ...    # phenomica-ray-tune
 
 Mirror `train.py`: `@hydra.main` + a top-level `ConfigStore` dataclass whose
 `defaults` compose `model`/`teacher`/`data`/`training` plus `ray_data`/
-`ray_train` (and `ray_tune` for the tune entry). Each group is instantiated
-with `instantiate(cfg.<group>, _target_wrapper_=pydantic_parser)`, then the
-matching `run_ray_train` / `run_ray_tune` is called.
+`ray_train` (and `ray_tune` for the tune entry). The submitit-only `cluster`
+group is intentionally absent (Ray scaling lives in `ray_train`).
+
+Each `@hydra.main` callable delegates to a `hydra_zen.zen`-wrapped task
+function whose parameters are named after the config groups; `zen` auto-extracts
+and instantiates each group, with `pydantic_parser` passed as the
+`instantiation_wrapper` so every group is validated exactly as in `train.py`.
+The wrapped task functions are Hydra-agnostic (callable with plain config dicts)
+and just dispatch to `run_ray_train` / `run_ray_tune`. The config schema classes
+are imported at module runtime (not under `TYPE_CHECKING`) so pydantic can
+resolve the task-function forward-ref annotations during validation.
 
 ## Config schemas (`phenomica.configs`)
 
@@ -181,7 +206,7 @@ See [running.md](running.md).
 
 ### Ray Train (single distributed run)
 ```bash
-# local CPU smoke
+# local CPU smoke (also: just ray-train-local)
 uv run phenomica-ray-train model=simple_resnet18 teacher=dinov2_small \
     data=imagenette training=debug ray_train=local_cpu ray_data=default
 
@@ -192,9 +217,14 @@ uv run phenomica-ray-train model=simple_resnet18 teacher=dinov2_base \
 
 ### Ray Tune (ASHA sweep)
 ```bash
-uv run phenomica-ray-tune model=simple_resnet18 teacher=dinov2_base \
-    data=imagenette ray_train=local_cpu ray_tune=default ray_data=default
+# local CPU sweep (also: just ray-tune-local)
+uv run phenomica-ray-tune model=simple_resnet18 teacher=dinov2_small \
+    data=imagenette training=debug ray_train=local_cpu ray_tune=debug ray_data=default
 ```
+
+The `just` targets `ray-train-local` / `ray-tune-local` wrap the CPU-local smoke
+forms; they sit alongside the submitit `smoke` / `sweep-objectives` targets but
+share no SLURM/submitit machinery.
 
 ## W&B integration
 
