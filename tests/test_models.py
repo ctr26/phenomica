@@ -997,3 +997,123 @@ def test_build_attndistill_from_config():
     assert criterion is not None
     # Check params are set (basic smoke test)
     assert hasattr(criterion, "_last_loss_metrics")
+
+
+def test_cls_attention_recompute_unit():
+    """Unit test of CLS attention recompute against a synthetic attention module."""
+    import torch.nn as nn
+
+    from phenomica.teacher import _compute_cls_attention_from_hidden_states
+
+    # Synthetic attention module mimicking DINOv2 interface
+    C = 192  # embed dim
+    num_heads = 12
+    head_dim = C // num_heads
+
+    class SyntheticAttention(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.qkv = nn.Linear(C, 3 * C, bias=False)
+            self.num_heads = num_heads
+            self.scale = head_dim**-0.5
+
+    attn_module = SyntheticAttention()
+    # Initialize qkv to identity-like for predictable attention
+    nn.init.eye_(attn_module.qkv.weight[:C, :])
+    nn.init.eye_(attn_module.qkv.weight[C : 2 * C, :])
+    nn.init.zeros_(attn_module.qkv.weight[2 * C :, :])
+
+    B, T = 2, 16
+    x = torch.randn(B, T, C)
+
+    # Compute via helper
+    cls_attn = _compute_cls_attention_from_hidden_states(x, attn_module)
+
+    # Assertions
+    assert cls_attn.shape == (B, num_heads, T), f"Expected [B, num_heads, T], got {cls_attn.shape}"
+    # Rows should sum to 1 (softmax)
+    row_sums = cls_attn.sum(dim=-1)
+    assert torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-5), "Rows must sum to 1"
+
+    # Reference hand-computed: q @ k^T * scale -> softmax -> CLS row
+    qkv_out = attn_module.qkv(x).reshape(B, T, 3, num_heads, head_dim).permute(2, 0, 3, 1, 4)
+    q_ref, k_ref = qkv_out[0], qkv_out[1]
+    attn_scores_ref = (q_ref @ k_ref.transpose(-2, -1)) * attn_module.scale
+    attn_weights_ref = torch.softmax(attn_scores_ref, dim=-1)
+    cls_attn_ref = attn_weights_ref[:, :, 0, :]
+
+    assert torch.allclose(cls_attn, cls_attn_ref, atol=1e-5), "Recompute must match reference"
+
+
+def test_attndistill_loss_warns_when_attn_missing(caplog):
+    """Test AttnDistill logs warning when attn_weight>0 but attn_maps is None."""
+    import logging
+
+    from phenomica.losses import build_loss
+
+    criterion = build_loss(
+        loss_type="attndistill",
+        attndistill_weight=1.0,
+        attndistill_attn_weight=1.0,  # >0, so should warn
+        attndistill_student_dim=768,
+        attndistill_num_heads=12,
+        attndistill_num_tokens=256,
+    )
+
+    B = 2
+    student_output = torch.randn(B, 768)
+    teacher_outputs = {
+        "cls": torch.randn(B, 768),
+        "attn_maps": None,  # Missing
+    }
+
+    with caplog.at_level(logging.WARNING):
+        loss = criterion(student_output, teacher_outputs)
+
+    # Loss should still be finite (CLS-only)
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+    # Attention term should be 0
+    assert criterion._last_loss_metrics["attndistill_attn"] == 0.0
+    # Warning should fire
+    assert any("attn_maps is None/empty" in record.message for record in caplog.records)
+
+
+def test_dinov2_teacher_real_attention_extraction_gpu():
+    """Integration test: real DINOv2 with extract_attention=True (GPU+network gated)."""
+    import pytest
+
+    if not torch.cuda.is_available():
+        pytest.skip("Needs GPU for real DINOv2")
+
+    # Attempt to load real teacher (network required)
+    try:
+        # Temporarily bypass monkeypatch to load the real class
+        from phenomica.teacher import DINOv2Teacher as RealTeacher
+
+        # This will download from torch.hub; may fail if network is down
+        teacher = RealTeacher(
+            model_name="dinov2_vitb14",
+            extract_layers=[11],
+            extract_attention=True,
+        )
+    except Exception as e:
+        pytest.skip(f"Network or hub load failed: {e}")
+
+    teacher = teacher.cuda()
+    x = torch.randn(1, 3, 224, 224, device="cuda")
+    outputs = teacher(x)
+
+    attn_maps = outputs["attn_maps"]
+    assert attn_maps is not None, "extract_attention=True should produce attn_maps"
+    assert isinstance(attn_maps, list)
+    assert len(attn_maps) > 0, "Should have at least one layer's attention"
+
+    for attn_map in attn_maps:
+        B, num_heads, N = attn_map.shape
+        assert B == 1
+        assert num_heads == 12  # vitb14 has 12 heads
+        assert N == 256  # 224/14 = 16 -> 16*16 = 256 patches
+        # Rows should sum to ~1 (softmax)
+        row_sums = attn_map.sum(dim=-1)
+        assert torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-3)

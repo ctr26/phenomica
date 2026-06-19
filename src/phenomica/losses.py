@@ -640,10 +640,12 @@ class AttnDistillLoss(nn.Module):
         attn_maps = teacher_outputs.get("attn_maps")
         if attn_maps is None or (isinstance(attn_maps, list) and len(attn_maps) == 0):
             # Graceful degradation: skip attention term.
-            if not self._warned_no_attn:
-                logger = logging.getLogger(__name__)
+            if not self._warned_no_attn and self.attndistill_attn_weight > 0:
                 logger.warning(
-                    "AttnDistill: teacher attn_maps is None/empty, skipping attention term."
+                    "AttnDistill: teacher attn_maps is None/empty but "
+                    "attndistill_attn_weight > 0. The attention-KL term will be "
+                    "skipped and the loss is CLS-only. Ensure the teacher was "
+                    "initialized with extract_attention=True."
                 )
                 self._warned_no_attn = True
             attn_loss = torch.tensor(0.0, device=student_output.device, dtype=student_output.dtype)
