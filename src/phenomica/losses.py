@@ -16,6 +16,19 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
+
+def _pairwise_cosine(x: torch.Tensor) -> torch.Tensor:
+    """Pairwise cosine-similarity matrix [B, B] from embeddings [B, D]."""
+    x_norm = F.normalize(x, dim=-1)
+    return x_norm @ x_norm.T
+
+
+def _mask_diagonal(sim: torch.Tensor, value: float = float("-inf")) -> torch.Tensor:
+    """Return `sim` with its diagonal set to `value` (excludes self-similarity)."""
+    eye = torch.eye(sim.size(0), device=sim.device, dtype=torch.bool)
+    return sim.masked_fill(eye, value)
+
+
 # Loss registry for extensible loss types
 LOSS_REGISTRY: dict[str, type[nn.Module]] = {}
 
@@ -281,20 +294,14 @@ class CosPressLoss(nn.Module):
             Scalar loss tensor.
         """
         teacher_cls = teacher_outputs["cls"]
-        batch_size = student_output.size(0)
-
-        # Normalize embeddings to unit sphere
-        student_norm = F.normalize(student_output, dim=-1)
-        teacher_norm = F.normalize(teacher_cls, dim=-1)
 
         # Compute similarity matrices [B, B]
-        sim_student = student_norm @ student_norm.T
-        sim_teacher = teacher_norm @ teacher_norm.T
+        sim_student = _pairwise_cosine(student_output)
+        sim_teacher = _pairwise_cosine(teacher_cls)
 
         # Mask diagonal (self-similarity) to -inf for softmax
-        mask = torch.eye(batch_size, device=student_output.device, dtype=torch.bool)
-        sim_student_masked = sim_student.masked_fill(mask, float("-inf"))
-        sim_teacher_masked = sim_teacher.masked_fill(mask, float("-inf"))
+        sim_student_masked = _mask_diagonal(sim_student)
+        sim_teacher_masked = _mask_diagonal(sim_teacher)
 
         # Convert to distributions with temperature
         # Teacher probabilities (target)
@@ -516,19 +523,16 @@ class ReKDLoss(nn.Module):
         # Clamp topk to valid range
         effective_topk = min(self.rekd_topk, B - 1)
 
-        # Teacher relation graph: normalize and compute similarity matrix
-        teacher_norm = F.normalize(teacher_cls, dim=-1)
-        S_t = teacher_norm @ teacher_norm.T  # [B, B]
+        # Teacher relation graph: pairwise cosine-similarity matrix
+        S_t = _pairwise_cosine(teacher_cls)  # [B, B]
 
         # Mine semantic positives: top-k most similar (excluding self)
         # Mask self-similarities with -inf before top-k
-        S_t_masked = S_t.clone()
-        S_t_masked.fill_diagonal_(-float("inf"))
+        S_t_masked = _mask_diagonal(S_t)
         _, topk_indices = torch.topk(S_t_masked, k=effective_topk, dim=1)  # [B, k]
 
         # Student similarities
-        student_norm = F.normalize(student_output, dim=-1)
-        S_s = student_norm @ student_norm.T  # [B, B]
+        S_s = _pairwise_cosine(student_output)  # [B, B]
 
         # Multi-positive InfoNCE: for each anchor i,
         # loss_i = -log(sum_p exp(s_ip/T) / sum_j exp(s_ij/T))
@@ -539,8 +543,7 @@ class ReKDLoss(nn.Module):
 
         # Logits: mask self with -inf in denominator
         logits = S_s / self.rekd_temperature
-        logits_masked = logits.clone()
-        logits_masked.fill_diagonal_(-float("inf"))
+        logits_masked = _mask_diagonal(logits)
 
         # Numerator: logsumexp over positives
         neg_inf = torch.tensor(-float("inf"), device=logits.device)
