@@ -1,21 +1,24 @@
-"""Ray Data ingest and preprocessing for distillation (SCAFFOLD STUB).
+"""Ray Data ingest and preprocessing for distillation.
 
 Builds a ``ray.data.Dataset`` of images from a :class:`~phenomica.configs.DataConfig`
-root and applies the same ImageNet-style normalization the torch
+root and applies the same ImageNet-style eval transforms the torch
 ``data.create_dataloaders`` path uses, so the Ray Train path consumes
 tensors in the teacher's expected input space.
 
 This is the Ray-native INDEPENDENT data path; the torch ``DataLoader`` path
 in :mod:`phenomica.data` is untouched and still backs the submitit launch.
-
-All bodies are intentionally unimplemented (scaffold). Build workers fill
-them against the fixed signatures below.
 """
 
 from __future__ import annotations
 
 import logging
+import pathlib
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
+from PIL import Image
+
+from phenomica.data import get_transforms
 
 if TYPE_CHECKING:
     import ray.data
@@ -29,28 +32,92 @@ logger = logging.getLogger(__name__)
 IMAGE_COLUMN = "image"
 LABEL_COLUMN = "label"
 
+# Key ``ray.data.read_images(include_paths=True)`` adds for each row's source
+# path; used to derive integer class labels from the parent directory name.
+_PATH_COLUMN = "path"
 
-def preprocess_batch(batch: dict[str, Any]) -> dict[str, Any]:
-    """Resize, scale, and ImageNet-normalize an image batch in place.
+# Standard split subdirectories selected by ``split`` when present under root.
+_SPLIT_SUBDIRS = ("train", "val")
+
+
+def _build_label_map(root: pathlib.Path) -> dict[str, int]:
+    """Map sorted class-subfolder names under ``root`` to integer labels.
+
+    Mirrors ``torchvision.datasets.ImageFolder`` semantics (classes are the
+    immediate subdirectories, sorted, indexed from 0) so Ray-derived labels
+    match the torch path.
+
+    Args:
+        root: Directory whose immediate subdirectories name the classes.
+
+    Returns:
+        Mapping from class-folder name to its integer label.
+    """
+    classes = sorted(p.name for p in root.iterdir() if p.is_dir())
+    return {name: idx for idx, name in enumerate(classes)}
+
+
+def preprocess_batch(
+    batch: dict[str, Any],
+    *,
+    image_size: int = 224,
+    label_map: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Resize, scale, and ImageNet-normalize an image batch.
 
     Designed for ``ray.data.Dataset.map_batches`` with
-    ``batch_format="numpy"``. Mirrors the eval transforms in
+    ``batch_format="numpy"``. Reuses the eval transforms from
     :func:`phenomica.data.get_transforms` (resize -> center-crop ->
-    to-tensor -> normalize) so Ray-fed images match the torch path.
+    to-tensor -> normalize) per image, so Ray-fed images match the torch
+    path exactly.
 
     Args:
         batch: Mapping with an ``IMAGE_COLUMN`` entry holding a batch of
             HWC uint8 image arrays (as produced by ``ray.data.read_images``)
-            and an optional ``LABEL_COLUMN`` entry.
+            and, when ``label_map`` is given, a ``_PATH_COLUMN`` entry of
+            source paths from which integer labels are derived.
+        image_size: Target square crop resolution.
+        label_map: Optional class-name -> integer-label mapping. When
+            provided, a ``LABEL_COLUMN`` of int64 labels is emitted from the
+            parent directory of each ``_PATH_COLUMN`` value.
 
     Returns:
-        The batch with ``IMAGE_COLUMN`` replaced by CHW float32 arrays
-        normalized to ImageNet mean/std.
-
-    Raises:
-        NotImplementedError: Always -- scaffold stub.
+        A batch dict with ``IMAGE_COLUMN`` as CHW float32 arrays normalized
+        to ImageNet mean/std and, when labels were derivable, a
+        ``LABEL_COLUMN`` of int64 labels.
     """
-    raise NotImplementedError("ray_data.preprocess_batch is a scaffold stub")
+    transform = get_transforms(image_size, is_train=False)
+    images = [
+        transform(Image.fromarray(img).convert("RGB")).numpy() for img in batch[IMAGE_COLUMN]
+    ]
+    out: dict[str, Any] = {IMAGE_COLUMN: np.stack(images).astype(np.float32)}
+
+    if label_map is not None and _PATH_COLUMN in batch:
+        out[LABEL_COLUMN] = np.array(
+            [label_map[pathlib.Path(p).parent.name] for p in batch[_PATH_COLUMN]],
+            dtype=np.int64,
+        )
+    return out
+
+
+def _resolve_split_dir(root: pathlib.Path, split: str) -> pathlib.Path:
+    """Return the directory to read for ``split``, falling back to ``root``.
+
+    Uses ``root/<split>`` when both standard split subdirectories exist
+    (matching :func:`phenomica.data.create_dataloaders`), otherwise reads
+    flat from ``root``.
+
+    Args:
+        root: Dataset root directory.
+        split: Requested split name (``"train"`` or ``"val"``).
+
+    Returns:
+        The resolved directory to read images from.
+    """
+    has_splits = all((root / sub).is_dir() for sub in _SPLIT_SUBDIRS)
+    if has_splits:
+        return root / split
+    return root
 
 
 def build_ray_dataset(
@@ -68,16 +135,39 @@ def build_ray_dataset(
 
     Args:
         data_cfg: Dataset config providing ``root``, ``image_size``, and
-            ``dataset_type``.
+            ``batch_size``.
         ray_data_cfg: Ray Data tuning knobs (parallelism, block override).
         split: Which split subdirectory to load (``"train"`` or ``"val"``);
             falls back to ``data_cfg.root`` when no split subdirs exist.
 
     Returns:
         A lazily-preprocessed ``ray.data.Dataset`` yielding rows with
-        ``IMAGE_COLUMN`` (CHW float32) and ``LABEL_COLUMN`` (int) columns.
-
-    Raises:
-        NotImplementedError: Always -- scaffold stub.
+        ``IMAGE_COLUMN`` (CHW float32) and ``LABEL_COLUMN`` (int64) columns.
     """
-    raise NotImplementedError("ray_data.build_ray_dataset is a scaffold stub")
+    import ray.data
+
+    read_dir = _resolve_split_dir(pathlib.Path(data_cfg.root), split)
+    label_map = _build_label_map(read_dir)
+    logger.info(
+        "Reading images for split=%s from %s (%d classes)",
+        split,
+        read_dir,
+        len(label_map),
+    )
+
+    override_num_blocks = ray_data_cfg.override_num_blocks
+    if override_num_blocks is None and ray_data_cfg.parallelism > 0:
+        override_num_blocks = ray_data_cfg.parallelism
+
+    dataset = ray.data.read_images(
+        str(read_dir),
+        mode="RGB",
+        include_paths=True,
+        override_num_blocks=override_num_blocks,
+    )
+    return dataset.map_batches(
+        preprocess_batch,
+        batch_format="numpy",
+        batch_size=data_cfg.batch_size,
+        fn_kwargs={"image_size": data_cfg.image_size, "label_map": label_map},
+    )

@@ -18,7 +18,12 @@ from phenomica.configs import (
     RayTuneConfig,
     RayTuneSearchSpace,
 )
-from phenomica.ray_data import build_ray_dataset
+from phenomica.ray_data import (
+    IMAGE_COLUMN,
+    LABEL_COLUMN,
+    build_ray_dataset,
+    preprocess_batch,
+)
 from phenomica.ray_launch import ray_train_main, ray_tune_main
 from phenomica.ray_train import run_ray_train
 from phenomica.ray_tune import run_ray_tune
@@ -30,7 +35,10 @@ __all__ = [
     "RayTrainConfig",
     "RayTuneConfig",
     "RayTuneSearchSpace",
+    "IMAGE_COLUMN",
+    "LABEL_COLUMN",
     "build_ray_dataset",
+    "preprocess_batch",
     "ray_train_main",
     "ray_tune_main",
     "run_ray_train",
