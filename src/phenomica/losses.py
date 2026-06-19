@@ -459,17 +459,6 @@ class ViTKDLoss(nn.Module):
         return total
 
 
-__all__ = [
-    "DistillationLoss",
-    "MultiFunctionDistillationLoss",
-    "CosPressLoss",
-    "ViTKDLoss",
-    "LOSS_REGISTRY",
-    "register_loss",
-    "build_loss",
-]
-
-
 @register_loss("rekd")
 class ReKDLoss(nn.Module):
     """Relation Knowledge Distillation (ReKD) loss.
@@ -570,18 +559,6 @@ class ReKDLoss(nn.Module):
         return total
 
 
-__all__ = [
-    "DistillationLoss",
-    "MultiFunctionDistillationLoss",
-    "CosPressLoss",
-    "ViTKDLoss",
-    "ReKDLoss",
-    "LOSS_REGISTRY",
-    "register_loss",
-    "build_loss",
-]
-
-
 @register_loss("attndistill")
 class AttnDistillLoss(nn.Module):
     """Attention distillation loss combining CLS-token matching with attention-map KL.
@@ -639,8 +616,6 @@ class AttnDistillLoss(nn.Module):
         Returns:
             Scalar loss tensor.
         """
-        import logging
-
         teacher_cls = teacher_outputs["cls"]
 
         # 1. CLS-token matching: MSE if dims match, else (1 - cosine) on shared dims.
