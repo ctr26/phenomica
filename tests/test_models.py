@@ -559,3 +559,26 @@ def test_vitkd_preset_exists():
 def test_vitkd_dim_mismatch_error():
     """Test ViTKD raises ValueError on student dim mismatch."""
     from phenomica.losses import ViTKDLoss
+
+
+def test_rekd_loss_forward_returns_scalar():
+    """ReKD forward returns a scalar tensor."""
+    from phenomica.losses import ReKDLoss
+def test_rekd_loss_metrics():
+    """ReKD populates _last_loss_metrics with rekd_contrastive and total."""
+    from phenomica.losses import ReKDLoss
+def test_rekd_loss_gradient_flow():
+    """ReKD gradient flows to student_output."""
+    from phenomica.losses import ReKDLoss
+def test_rekd_loss_dim_agnostic():
+    """ReKD works with different student/teacher dimensions."""
+    from phenomica.losses import ReKDLoss
+def test_rekd_loss_topk_clamping():
+    """ReKD clamps topk when it exceeds batch size."""
+    from phenomica.losses import ReKDLoss
+def test_rekd_loss_tiny_batch():
+    """ReKD handles batch size 1 without crashing."""
+    from phenomica.losses import ReKDLoss
+def test_rekd_preset_in_store():
+    """'rekd' preset is registered in hydra-zen store."""
+    from hydra_zen import store

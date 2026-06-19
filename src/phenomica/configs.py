@@ -85,6 +85,8 @@ class TrainingConfig:
     vitkd_num_tokens: PositiveInt = 256
     attndistill_weight: NonNegativeFloat = 1.0
     rekd_weight: NonNegativeFloat = 1.0
+    rekd_temperature: PositiveFloat = 0.1
+    rekd_topk: PositiveInt = 5
     use_wandb: bool = True
     wandb_project: str = "phenomica"
     wandb_run_name: Optional[str] = None
@@ -184,6 +186,7 @@ def register_configs() -> None:
     )
     _preset(TrainingConfig, "training", "cospress", loss_type="cospress")
     _preset(TrainingConfig, "training", "vitkd", loss_type="vitkd")
+    _preset(TrainingConfig, "training", "rekd", loss_type="rekd")
 
     _preset(ClusterConfig, "cluster", "local")
     _preset(ClusterConfig, "cluster", "biohive", use_submitit=True)

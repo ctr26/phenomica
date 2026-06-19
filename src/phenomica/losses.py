@@ -466,3 +466,115 @@ __all__ = [
     "register_loss",
     "build_loss",
 ]
+
+
+@register_loss("rekd")
+class ReKDLoss(nn.Module):
+    """Relation Knowledge Distillation (ReKD) loss.
+
+    Implements in-batch multi-positive contrastive learning guided by teacher
+    semantic similarity (arxiv 2112.04174). For each student anchor, the teacher's
+    top-k most similar samples become positives in a multi-positive InfoNCE loss,
+    pulling the student's relational neighborhoods toward the teacher's.
+
+    Args:
+        rekd_temperature: Softmax temperature for student similarities.
+        rekd_topk: Number of semantic positives per anchor (clamped to batch size - 1).
+        rekd_weight: Global weight for the loss.
+    """
+
+    def __init__(
+        self,
+        rekd_temperature: float = 0.1,
+        rekd_topk: int = 5,
+        rekd_weight: float = 1.0,
+    ) -> None:
+        super().__init__()
+        self.rekd_temperature = rekd_temperature
+        self.rekd_topk = rekd_topk
+        self.rekd_weight = rekd_weight
+        self._last_loss_metrics: dict[str, float] = {}
+
+    def forward(
+        self,
+        student_output: torch.Tensor,
+        teacher_outputs: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Compute ReKD contrastive loss.
+
+        Args:
+            student_output: [B, D_s] student embeddings.
+            teacher_outputs: Dict containing "cls" [B, D_t] teacher embeddings.
+
+        Returns:
+            Scalar loss tensor.
+        """
+        teacher_cls = teacher_outputs["cls"]
+        B = student_output.size(0)
+
+        # Handle degenerate batch sizes
+        if B < 2:
+            zero_loss = torch.tensor(0.0, device=student_output.device, dtype=student_output.dtype)
+            self._last_loss_metrics = {"rekd_contrastive": 0.0, "total": 0.0}
+            return zero_loss
+
+        # Clamp topk to valid range
+        effective_topk = min(self.rekd_topk, B - 1)
+
+        # Teacher relation graph: normalize and compute similarity matrix
+        teacher_norm = F.normalize(teacher_cls, dim=-1)
+        S_t = teacher_norm @ teacher_norm.T  # [B, B]
+
+        # Mine semantic positives: top-k most similar (excluding self)
+        # Mask self-similarities with -inf before top-k
+        S_t_masked = S_t.clone()
+        S_t_masked.fill_diagonal_(-float("inf"))
+        _, topk_indices = torch.topk(S_t_masked, k=effective_topk, dim=1)  # [B, k]
+
+        # Student similarities
+        student_norm = F.normalize(student_output, dim=-1)
+        S_s = student_norm @ student_norm.T  # [B, B]
+
+        # Multi-positive InfoNCE: for each anchor i,
+        # loss_i = -log(sum_p exp(s_ip/T) / sum_j exp(s_ij/T))
+        # Build positive mask [B, B] from topk_indices
+        pos_mask = torch.zeros_like(S_s, dtype=torch.bool)
+        batch_indices = torch.arange(B, device=S_s.device).unsqueeze(1)
+        pos_mask[batch_indices, topk_indices] = True
+
+        # Logits: mask self with -inf in denominator
+        logits = S_s / self.rekd_temperature
+        logits_masked = logits.clone()
+        logits_masked.fill_diagonal_(-float("inf"))
+
+        # Numerator: logsumexp over positives
+        neg_inf = torch.tensor(-float("inf"), device=logits.device)
+        pos_logits = torch.where(pos_mask, logits, neg_inf)
+        log_numerator = torch.logsumexp(pos_logits, dim=1)  # [B]
+
+        # Denominator: logsumexp over all (excluding self)
+        log_denominator = torch.logsumexp(logits_masked, dim=1)  # [B]
+
+        # Loss per anchor
+        loss_per_anchor = -(log_numerator - log_denominator)
+        contrastive = loss_per_anchor.mean()
+
+        total = self.rekd_weight * contrastive
+
+        self._last_loss_metrics = {
+            "rekd_contrastive": contrastive.item(),
+            "total": total.item(),
+        }
+        return total
+
+
+__all__ = [
+    "DistillationLoss",
+    "MultiFunctionDistillationLoss",
+    "CosPressLoss",
+    "ViTKDLoss",
+    "ReKDLoss",
+    "LOSS_REGISTRY",
+    "register_loss",
+    "build_loss",
+]
