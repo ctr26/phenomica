@@ -24,7 +24,7 @@ _PRESETS = [
             "multi_resnet18",
             "multi_effnet",
         ],
-        "teacher": ["dinov2_base", "dinov2_small", "dinov2_large"],
+        "teacher": ["dinov2_base", "dinov2_base_attn", "dinov2_small", "dinov2_large"],
         "data": ["imagenet", "custom"],
         "training": ["default", "debug"],
         "cluster": ["local", "biohive"],
@@ -213,3 +213,60 @@ def test_multifunction_variant_trains() -> None:
     )
     avg_loss = trainer.train_epoch(loader)
     assert math.isfinite(avg_loss)
+
+
+def test_dinov2_base_attn_preset_resolves():
+    """Teacher preset dinov2_base_attn sets extract_attention=True."""
+    GlobalHydra.instance().clear()
+    with initialize(version_base="1.3", config_path=None):
+        cfg = compose(config_name="phenomica", overrides=["teacher=dinov2_base_attn"])
+    teacher_cfg = instantiate(cfg.teacher, _target_wrapper_=pydantic_parser)
+    assert teacher_cfg.extract_attention is True
+
+
+def test_attndistill_receives_real_attention():
+    """AttnDistill loss receives non-None attn_maps when extract_attention=True."""
+    from types import SimpleNamespace
+
+    from torch.utils.data import DataLoader, TensorDataset
+
+    data_cfg = SimpleNamespace(
+        dataset_type="imagefolder",
+        root="data/dummy",
+        image_size=224,
+        batch_size=2,
+        num_workers=0,
+        pin_memory=False,
+        val_split=0.1,
+    )
+    trainer = DistillationTrainer(
+        training_cfg=TrainingConfig(
+            use_wandb=False,
+            use_ddp=False,
+            warmup_epochs=0,
+            lr_scheduler=None,
+            loss_type="attndistill",
+        ),
+        model_cfg=ModelConfig(variant="simple", pretrained_backbone=False),
+        teacher_cfg=TeacherConfig(extract_attention=True),
+        data_cfg=data_cfg,
+    )
+
+    # Run one forward/criterion call
+    loader = DataLoader(
+        TensorDataset(torch.randn(4, 3, 224, 224), torch.zeros(4, dtype=torch.long)),
+        batch_size=2,
+    )
+    batch = next(iter(loader))
+    images, _ = batch
+    student_out = trainer.model(images)
+    with torch.no_grad():
+        teacher_out = trainer.teacher(images)
+
+    loss = trainer.criterion(student_out, teacher_out)
+
+    # Verify attn_maps is non-None and real attention path was used
+    assert "attn_maps" in teacher_out
+    assert teacher_out["attn_maps"] is not None
+    assert trainer.criterion._last_loss_metrics["attndistill_attn"] > 0.0
+    assert loss.item() > 0.0

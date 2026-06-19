@@ -51,6 +51,7 @@ class DistillationTrainer:
         self.teacher = DINOv2Teacher(
             model_name=teacher_cfg.model_name,
             extract_layers=extract_layers,
+            extract_attention=getattr(teacher_cfg, "extract_attention", False),
         ).to(self.device)
 
         # Sync student head dims to loaded teacher embed_dim.

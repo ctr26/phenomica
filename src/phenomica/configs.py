@@ -46,6 +46,8 @@ class ModelConfig:
 class TeacherConfig:
     model_name: str = "dinov2_vitb14"
     embed_dim: PositiveInt = 768
+    # Enables CLS-attention extraction, required for loss_type="attndistill".
+    extract_attention: bool = False
 
 
 @dataclass
@@ -147,6 +149,12 @@ def register_configs() -> None:
     )
 
     _preset(TeacherConfig, "teacher", "dinov2_base")
+    _preset(
+        TeacherConfig,
+        "teacher",
+        "dinov2_base_attn",
+        extract_attention=True,
+    )
     _preset(
         TeacherConfig,
         "teacher",
