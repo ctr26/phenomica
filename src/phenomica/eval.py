@@ -108,9 +108,7 @@ def evaluate_model(
     test_features, test_labels = extract_features(model, val_loader, device)
 
     return {
-        "knn_accuracy": knn_accuracy(
-            train_features, train_labels, test_features, test_labels
-        ),
+        "knn_accuracy": knn_accuracy(train_features, train_labels, test_features, test_labels),
         "linear_probe_accuracy": linear_probe_accuracy(
             train_features, train_labels, test_features, test_labels
         ),

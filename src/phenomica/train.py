@@ -47,9 +47,7 @@ def _run_training(
         data_cfg=data,
     )
 
-    train_loader, val_loader = create_dataloaders(
-        data, is_distributed=trainer.is_distributed
-    )
+    train_loader, val_loader = create_dataloaders(data, is_distributed=trainer.is_distributed)
 
     try:
         trainer.train(train_loader, val_loader)

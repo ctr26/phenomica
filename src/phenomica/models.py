@@ -129,10 +129,9 @@ class MultiFunctionDistiller(nn.Module):
         self.backbone, feat_dim = _create_backbone(backbone, pretrained_backbone)
         self.global_head = ProjectionHead(feat_dim, feat_dim, teacher_cls_dim)
         self.spatial_head = ProjectionHead(feat_dim, feat_dim, teacher_patch_dim * 2)
-        self.scale_heads = nn.ModuleList([
-            ProjectionHead(feat_dim, feat_dim, teacher_cls_dim)
-            for _ in (teacher_layers or [])
-        ])
+        self.scale_heads = nn.ModuleList(
+            [ProjectionHead(feat_dim, feat_dim, teacher_cls_dim) for _ in (teacher_layers or [])]
+        )
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         """Encode images through all heads.

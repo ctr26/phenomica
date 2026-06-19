@@ -84,6 +84,10 @@ class TrainingConfig:
     vitkd_gen_weight: NonNegativeFloat = 1.0
     vitkd_num_tokens: PositiveInt = 256
     attndistill_weight: NonNegativeFloat = 1.0
+    attndistill_attn_weight: NonNegativeFloat = 1.0
+    attndistill_student_dim: PositiveInt = 768
+    attndistill_num_heads: PositiveInt = 12
+    attndistill_num_tokens: PositiveInt = 256
     rekd_weight: NonNegativeFloat = 1.0
     rekd_temperature: PositiveFloat = 0.1
     rekd_topk: PositiveInt = 5
@@ -187,6 +191,7 @@ def register_configs() -> None:
     _preset(TrainingConfig, "training", "cospress", loss_type="cospress")
     _preset(TrainingConfig, "training", "vitkd", loss_type="vitkd")
     _preset(TrainingConfig, "training", "rekd", loss_type="rekd")
+    _preset(TrainingConfig, "training", "attndistill", loss_type="attndistill")
 
     _preset(ClusterConfig, "cluster", "local")
     _preset(ClusterConfig, "cluster", "biohive", use_submitit=True)

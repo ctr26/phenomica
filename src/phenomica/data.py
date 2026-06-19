@@ -11,9 +11,7 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
-def get_transforms(
-    image_size: int = 224, is_train: bool = True
-) -> transforms.Compose:
+def get_transforms(image_size: int = 224, is_train: bool = True) -> transforms.Compose:
     """Return standard ImageNet-style transforms.
 
     Args:
@@ -25,25 +23,27 @@ def get_transforms(
         A ``transforms.Compose`` pipeline.
     """
     if is_train:
-        return transforms.Compose([
-            transforms.RandomResizedCrop(image_size),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+        return transforms.Compose(
+            [
+                transforms.RandomResizedCrop(image_size),
+                transforms.RandomHorizontalFlip(),
+                transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            ]
+        )
+
+    return transforms.Compose(
+        [
+            transforms.Resize(256),
+            transforms.CenterCrop(image_size),
             transforms.ToTensor(),
             transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-        ])
-
-    return transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    ])
+        ]
+    )
 
 
-def create_dataloaders(
-    cfg, is_distributed: bool = False
-) -> tuple[DataLoader, DataLoader | None]:
+def create_dataloaders(cfg, is_distributed: bool = False) -> tuple[DataLoader, DataLoader | None]:
     """Create train and optional validation dataloaders from a Hydra config.
 
     Supports ``cfg.dataset_type == "imagefolder"`` backed by

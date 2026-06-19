@@ -52,9 +52,7 @@ def test_pydantic_validation_literal():
     Conf = builds(ModelConfig, populate_full_signature=True)
 
     # Valid literal -> OK
-    model_cfg = instantiate(
-        Conf(variant="simple"), _target_wrapper_=pydantic_parser
-    )
+    model_cfg = instantiate(Conf(variant="simple"), _target_wrapper_=pydantic_parser)
     assert model_cfg.variant == "simple"
 
     # Invalid literal -> raises
@@ -210,9 +208,7 @@ def test_multifunction_variant_trains() -> None:
         data_cfg=data_cfg,
     )
     loader = DataLoader(
-        TensorDataset(
-            torch.randn(4, 3, 224, 224), torch.zeros(4, dtype=torch.long)
-        ),
+        TensorDataset(torch.randn(4, 3, 224, 224), torch.zeros(4, dtype=torch.long)),
         batch_size=2,
     )
     avg_loss = trainer.train_epoch(loader)

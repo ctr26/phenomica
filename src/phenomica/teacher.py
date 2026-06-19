@@ -7,6 +7,7 @@ for multi-level distillation.
 
 from __future__ import annotations
 
+import logging
 from typing import Sequence
 
 import torch
@@ -59,6 +60,68 @@ class DINOv2Teacher(nn.Module):
 
         self._extract_attention = extract_attention
         self._attn_weights: list[torch.Tensor] = []
+
+        # Register hooks to extract CLS-token attention if requested.
+        # DINOv2/timm uses fused SDPA/xformers that doesn't return weights,
+        # so we recompute them from q/k via a forward hook.
+        if extract_attention:
+            for layer_idx in self._extract_layers:
+                block = self._model.blocks[layer_idx]
+                block.attn.register_forward_hook(self._make_attn_hook(layer_idx))
+
+    def _make_attn_hook(self, layer_idx: int):
+        """Create a forward hook to extract CLS-token attention from a block.
+
+        DINOv2 attention modules use fused SDPA/xformers that don't return weights,
+        so we recompute CLS-token attention from q/k. The hook captures the input
+        to the attention module, computes qkv, reshapes to multi-head form, and
+        extracts the CLS-query attention weights.
+
+        Args:
+            layer_idx: Block index for debugging/logging.
+
+        Returns:
+            Hook function compatible with register_forward_hook.
+        """
+
+        def hook(module, inputs, outputs):
+            try:
+                # inputs[0] is the hidden state [B, T, C] entering the attention module.
+                x = inputs[0]
+                B, T, C = x.shape
+
+                # Compute qkv via the attention module's qkv linear layer.
+                # qkv shape: [B, T, 3 * C] -> reshape to [B, T, 3, num_heads, head_dim].
+                qkv = module.qkv(x)
+                num_heads = module.num_heads
+                head_dim = C // num_heads
+                qkv = qkv.reshape(B, T, 3, num_heads, head_dim)
+
+                # Permute to [3, B, num_heads, T, head_dim] and split.
+                qkv = qkv.permute(2, 0, 3, 1, 4)
+                q, k = qkv[0], qkv[1]  # each [B, heads, T, head_dim]
+
+                # Compute attention scores: q @ k^T / sqrt(head_dim).
+                scale = head_dim**-0.5
+                attn_scores = (q @ k.transpose(-2, -1)) * scale  # [B, heads, T, T]
+
+                # Softmax over key dimension to get attention weights.
+                attn_weights = torch.softmax(attn_scores, dim=-1)  # [B, heads, T, T]
+
+                # Extract CLS-query row (token 0) -> [B, heads, T].
+                cls_attn = attn_weights[:, :, 0, :]
+
+                # Append to the teacher's attention list.
+                self._attn_weights.append(cls_attn)
+
+            except Exception as e:
+                # Defensive: log warning and skip on any failure.
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"DINOv2Teacher attention extraction failed at layer {layer_idx}: {e}"
+                )
+
+        return hook
 
     def train(self, mode: bool = True) -> DINOv2Teacher:
         """Override to keep the teacher permanently in eval mode."""

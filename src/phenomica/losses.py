@@ -329,6 +329,8 @@ class CosPressLoss(nn.Module):
             "total": total.item(),
         }
 
+        return total
+
 
 @register_loss("vitkd")
 class ViTKDLoss(nn.Module):
@@ -574,6 +576,141 @@ __all__ = [
     "CosPressLoss",
     "ViTKDLoss",
     "ReKDLoss",
+    "LOSS_REGISTRY",
+    "register_loss",
+    "build_loss",
+]
+
+
+@register_loss("attndistill")
+class AttnDistillLoss(nn.Module):
+    """Attention distillation loss combining CLS-token matching with attention-map KL.
+
+    Based on AttnDistill (arxiv 2210.00944): CLS-token MSE + KL divergence on
+    CLS attention maps. Since the pooled student has no native attention mechanism,
+    we use a learnable attention predictor head that maps the student embedding to
+    per-head attention distributions.
+
+    Args:
+        attndistill_weight: Weight for CLS-token matching term.
+        attndistill_attn_weight: Weight for attention-map KL term.
+        attndistill_student_dim: Student embedding dimensionality.
+        attndistill_num_heads: Number of attention heads to predict.
+        attndistill_num_tokens: Number of tokens in attention maps (e.g., 256 for 16x16 patches).
+    """
+
+    def __init__(
+        self,
+        attndistill_weight: float = 1.0,
+        attndistill_attn_weight: float = 1.0,
+        attndistill_student_dim: int = 768,
+        attndistill_num_heads: int = 12,
+        attndistill_num_tokens: int = 256,
+    ) -> None:
+        super().__init__()
+        self.attndistill_weight = attndistill_weight
+        self.attndistill_attn_weight = attndistill_attn_weight
+        self.attndistill_student_dim = attndistill_student_dim
+        self.attndistill_num_heads = attndistill_num_heads
+        self.attndistill_num_tokens = attndistill_num_tokens
+
+        # Learnable attention predictor: maps student embedding to attention maps.
+        # Outputs [B, num_heads * num_tokens] -> reshape to [B, heads, tokens].
+        self.attn_predictor = nn.Linear(
+            attndistill_student_dim,
+            attndistill_num_heads * attndistill_num_tokens,
+        )
+
+        self._last_loss_metrics: dict[str, float] = {}
+        self._warned_no_attn = False
+
+    def forward(
+        self,
+        student_output: torch.Tensor,
+        teacher_outputs: dict[str, torch.Tensor | list[torch.Tensor]],
+    ) -> torch.Tensor:
+        """Compute AttnDistill loss.
+
+        Args:
+            student_output: Student embedding [B, D].
+            teacher_outputs: Dict with keys "cls" [B, D_t] and optionally
+                "attn_maps" (list of [B, num_heads, N] or None).
+
+        Returns:
+            Scalar loss tensor.
+        """
+        import logging
+
+        teacher_cls = teacher_outputs["cls"]
+
+        # 1. CLS-token matching: MSE if dims match, else (1 - cosine) on shared dims.
+        # When dims mismatch, compare the first min(D_s, D_t) dimensions.
+        if student_output.shape[-1] == teacher_cls.shape[-1]:
+            cls_loss = F.mse_loss(student_output, teacher_cls)
+        else:
+            min_dim = min(student_output.shape[-1], teacher_cls.shape[-1])
+            cls_loss = (
+                1.0
+                - F.cosine_similarity(student_output[..., :min_dim], teacher_cls[..., :min_dim])
+            ).mean()
+
+        # 2. Attention-map KL divergence via learnable predictor.
+        attn_maps = teacher_outputs.get("attn_maps")
+        if attn_maps is None or (isinstance(attn_maps, list) and len(attn_maps) == 0):
+            # Graceful degradation: skip attention term.
+            if not self._warned_no_attn:
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    "AttnDistill: teacher attn_maps is None/empty, skipping attention term."
+                )
+                self._warned_no_attn = True
+            attn_loss = torch.tensor(0.0, device=student_output.device)
+        else:
+            # Average teacher attention maps across layers (or use the last).
+            # Each map is [B, num_heads, N]. We'll average over layers.
+            teacher_attn_stacked = torch.stack(attn_maps, dim=0)  # [L, B, H, N]
+            teacher_attn_avg = teacher_attn_stacked.mean(dim=0)  # [B, H, N]
+
+            # Normalize teacher attention to a proper distribution over N.
+            teacher_attn_prob = F.softmax(teacher_attn_avg, dim=-1)  # [B, H, N]
+
+            # Predict student attention: [B, D] -> [B, H * N] -> [B, H, N].
+            B = student_output.size(0)
+            student_attn_logits = self.attn_predictor(student_output)  # [B, H*N]
+            student_attn_logits = student_attn_logits.view(
+                B, self.attndistill_num_heads, self.attndistill_num_tokens
+            )
+
+            # Log-softmax for KL divergence input.
+            student_log_prob = F.log_softmax(student_attn_logits, dim=-1)
+
+            # KL(teacher || student) = sum_i p_i * log(p_i / q_i).
+            # F.kl_div expects (log_q, p) with reduction="batchmean".
+            attn_loss = F.kl_div(
+                student_log_prob,
+                teacher_attn_prob,
+                reduction="batchmean",
+                log_target=False,
+            )
+
+        # 3. Combine terms.
+        total = self.attndistill_weight * cls_loss + self.attndistill_attn_weight * attn_loss
+
+        self._last_loss_metrics = {
+            "attndistill_cls": cls_loss.item(),
+            "attndistill_attn": attn_loss.item(),
+            "total": total.item(),
+        }
+        return total
+
+
+__all__ = [
+    "DistillationLoss",
+    "MultiFunctionDistillationLoss",
+    "CosPressLoss",
+    "ViTKDLoss",
+    "ReKDLoss",
+    "AttnDistillLoss",
     "LOSS_REGISTRY",
     "register_loss",
     "build_loss",

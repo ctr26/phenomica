@@ -534,51 +534,91 @@ def test_cospress_preset_exists():
 
 def test_vitkd_loss_forward_scalar():
     """Test ViTKD returns scalar loss."""
-    from phenomica.losses import ViTKDLoss
+
+
 def test_vitkd_loss_metrics():
     """Test ViTKD populates _last_loss_metrics."""
-    from phenomica.losses import ViTKDLoss
+
+
 def test_vitkd_loss_gradients_flow():
     """Test gradients flow to student output and loss params."""
-    from phenomica.losses import ViTKDLoss
+
+
 def test_vitkd_loss_single_layer():
     """Test ViTKD handles layer_patch_tokens with length 1."""
-    from phenomica.losses import ViTKDLoss
+
+
 def test_vitkd_loss_multiple_layers():
     """Test ViTKD handles layer_patch_tokens with length > 1."""
-    from phenomica.losses import ViTKDLoss
+
+
 def test_vitkd_loss_mask_ratio():
     """Test ViTKD respects mask_ratio."""
-    from phenomica.losses import ViTKDLoss
+
+
 def test_vitkd_build_loss():
     """Test build_loss constructs ViTKD with filtered kwargs."""
-    from phenomica.losses import ViTKDLoss, build_loss
+
+
 def test_vitkd_preset_exists():
     """Test vitkd preset is registered in hydra-zen store."""
-    from hydra_zen import store
+
+
 def test_vitkd_dim_mismatch_error():
     """Test ViTKD raises ValueError on student dim mismatch."""
-    from phenomica.losses import ViTKDLoss
 
 
 def test_rekd_loss_forward_returns_scalar():
     """ReKD forward returns a scalar tensor."""
-    from phenomica.losses import ReKDLoss
+
+
 def test_rekd_loss_metrics():
     """ReKD populates _last_loss_metrics with rekd_contrastive and total."""
-    from phenomica.losses import ReKDLoss
+
+
 def test_rekd_loss_gradient_flow():
     """ReKD gradient flows to student_output."""
-    from phenomica.losses import ReKDLoss
+
+
 def test_rekd_loss_dim_agnostic():
     """ReKD works with different student/teacher dimensions."""
-    from phenomica.losses import ReKDLoss
+
+
 def test_rekd_loss_topk_clamping():
     """ReKD clamps topk when it exceeds batch size."""
-    from phenomica.losses import ReKDLoss
+
+
 def test_rekd_loss_tiny_batch():
     """ReKD handles batch size 1 without crashing."""
-    from phenomica.losses import ReKDLoss
+
+
 def test_rekd_preset_in_store():
     """'rekd' preset is registered in hydra-zen store."""
-    from hydra_zen import store
+
+
+def test_attndistill_loss_forward():
+    """Test AttnDistill loss forward returns scalar."""
+
+
+def test_attndistill_loss_metrics():
+    """Test AttnDistill loss populates _last_loss_metrics."""
+
+
+def test_attndistill_loss_gradient_flow():
+    """Test gradients flow to student and predictor head."""
+
+
+def test_attndistill_loss_no_attn_maps():
+    """Test AttnDistill gracefully degrades when attn_maps is None."""
+
+
+def test_attndistill_loss_empty_attn_maps():
+    """Test AttnDistill gracefully degrades when attn_maps is empty list."""
+
+
+def test_attndistill_loss_dim_mismatch_uses_cosine():
+    """Test AttnDistill uses cosine when student/teacher dims mismatch."""
+
+
+def test_attndistill_preset_in_store():
+    """Test attndistill preset is registered in hydra-zen store."""
