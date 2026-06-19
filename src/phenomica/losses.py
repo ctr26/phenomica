@@ -424,7 +424,11 @@ class ViTKDLoss(nn.Module):
         for shallow_tokens in shallow_layers:  # Each [B, N, D_teacher]
             teacher_shallow_summary = shallow_tokens.mean(dim=1)  # [B, D_teacher]
             direct_losses.append(F.mse_loss(projected_student, teacher_shallow_summary))
-        direct_loss = torch.stack(direct_losses).mean() if direct_losses else torch.tensor(0.0)
+        direct_loss = (
+            torch.stack(direct_losses).mean()
+            if direct_losses
+            else torch.tensor(0.0, device=student_output.device, dtype=student_output.dtype)
+        )
 
         # GENERATIVE TERM: deepest layer
         deep_tokens = layer_patch_tokens[-1]  # [B, N, D_teacher]
@@ -436,7 +440,7 @@ class ViTKDLoss(nn.Module):
 
         # Mask a fraction of tokens and compute MSE only on masked positions
         N = deep_tokens.size(1)
-        num_masked = max(1, int(N * self.vitkd_mask_ratio))
+        num_masked = N if self.vitkd_mask_ratio <= 0.0 else max(1, int(N * self.vitkd_mask_ratio))
 
         # Random mask per batch element
         mask_indices = torch.rand(B, N, device=deep_tokens.device).argsort(dim=1)[:, :num_masked]
@@ -639,7 +643,7 @@ class AttnDistillLoss(nn.Module):
                     "AttnDistill: teacher attn_maps is None/empty, skipping attention term."
                 )
                 self._warned_no_attn = True
-            attn_loss = torch.tensor(0.0, device=student_output.device)
+            attn_loss = torch.tensor(0.0, device=student_output.device, dtype=student_output.dtype)
         else:
             # Average teacher attention maps across layers (or use the last).
             # Each map is [B, num_heads, N]. We'll average over layers.
