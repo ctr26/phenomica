@@ -530,3 +530,32 @@ def test_cospress_preset_exists():
     assert "training" in zen_store, "training group should exist in store"
     training_keys = zen_store["training"].keys()
     assert ("training", "cospress") in training_keys, "cospress preset should be in training group"
+
+
+def test_vitkd_loss_forward_scalar():
+    """Test ViTKD returns scalar loss."""
+    from phenomica.losses import ViTKDLoss
+def test_vitkd_loss_metrics():
+    """Test ViTKD populates _last_loss_metrics."""
+    from phenomica.losses import ViTKDLoss
+def test_vitkd_loss_gradients_flow():
+    """Test gradients flow to student output and loss params."""
+    from phenomica.losses import ViTKDLoss
+def test_vitkd_loss_single_layer():
+    """Test ViTKD handles layer_patch_tokens with length 1."""
+    from phenomica.losses import ViTKDLoss
+def test_vitkd_loss_multiple_layers():
+    """Test ViTKD handles layer_patch_tokens with length > 1."""
+    from phenomica.losses import ViTKDLoss
+def test_vitkd_loss_mask_ratio():
+    """Test ViTKD respects mask_ratio."""
+    from phenomica.losses import ViTKDLoss
+def test_vitkd_build_loss():
+    """Test build_loss constructs ViTKD with filtered kwargs."""
+    from phenomica.losses import ViTKDLoss, build_loss
+def test_vitkd_preset_exists():
+    """Test vitkd preset is registered in hydra-zen store."""
+    from hydra_zen import store
+def test_vitkd_dim_mismatch_error():
+    """Test ViTKD raises ValueError on student dim mismatch."""
+    from phenomica.losses import ViTKDLoss

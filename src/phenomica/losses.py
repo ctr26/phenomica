@@ -329,6 +329,131 @@ class CosPressLoss(nn.Module):
             "total": total.item(),
         }
 
+
+@register_loss("vitkd")
+class ViTKDLoss(nn.Module):
+    """ViTKD loss: shallow-layer direct mimicry + deep-layer generative reconstruction.
+
+    Adapted from arxiv 2209.02432 for pooled student embeddings (not token-level).
+    Direct term: shallow teacher layers' patch tokens (mean-pooled) vs projected student.
+    Generative term: reconstructs deep teacher layer's masked patch tokens from student.
+
+    Handles variable teacher layer counts robustly. If len(layer_patch_tokens)==1,
+    uses it as the deep target; direct term is either skipped or uses the same layer.
+
+    Args:
+        vitkd_student_dim: Student embedding dimension (must match student_output.shape[-1]).
+        vitkd_teacher_dim: Teacher embedding dimension (typically 768 for DINOv2 base).
+        vitkd_num_tokens: Number of patch tokens N (typically 256 for 224x224/14x14).
+        vitkd_mask_ratio: Fraction of tokens to mask in generative term [0.0, 1.0].
+        vitkd_weight: Weight for direct mimicry term.
+        vitkd_gen_weight: Weight for generative reconstruction term.
+    """
+
+    def __init__(
+        self,
+        vitkd_student_dim: int = 768,
+        vitkd_teacher_dim: int = 768,
+        vitkd_num_tokens: int = 256,
+        vitkd_mask_ratio: float = 0.5,
+        vitkd_weight: float = 1.0,
+        vitkd_gen_weight: float = 1.0,
+    ) -> None:
+        super().__init__()
+        self.vitkd_student_dim = vitkd_student_dim
+        self.vitkd_teacher_dim = vitkd_teacher_dim
+        self.vitkd_num_tokens = vitkd_num_tokens
+        self.vitkd_mask_ratio = vitkd_mask_ratio
+        self.vitkd_weight = vitkd_weight
+        self.vitkd_gen_weight = vitkd_gen_weight
+
+        # Direct term: project student -> teacher dim for shallow layer matching
+        self.direct_proj = nn.Linear(vitkd_student_dim, vitkd_teacher_dim)
+
+        # Generative term: reconstruct deep layer's N×D tokens from student embedding
+        # Two-stage: project to teacher dim, then generate N token vectors
+        self.gen_proj = nn.Linear(vitkd_student_dim, vitkd_teacher_dim)
+        self.gen_decoder = nn.Linear(vitkd_teacher_dim, vitkd_num_tokens * vitkd_teacher_dim)
+
+        self._last_loss_metrics: dict[str, float] = {}
+
+    def forward(
+        self,
+        student_output: torch.Tensor,
+        teacher_outputs: dict[str, torch.Tensor | list[torch.Tensor]],
+    ) -> torch.Tensor:
+        """Compute ViTKD loss.
+
+        Args:
+            student_output: [B, vitkd_student_dim] pooled student embedding.
+            teacher_outputs: Dict with "layer_patch_tokens" list of [B, N, vitkd_teacher_dim].
+
+        Returns:
+            Scalar loss tensor.
+
+        Raises:
+            ValueError: If student_output dim doesn't match vitkd_student_dim.
+        """
+        B = student_output.size(0)
+
+        # Validate student dim
+        if student_output.shape[-1] != self.vitkd_student_dim:
+            raise ValueError(
+                f"student_output dim {student_output.shape[-1]} "
+                f"!= vitkd_student_dim {self.vitkd_student_dim}"
+            )
+
+        layer_patch_tokens = teacher_outputs["layer_patch_tokens"]
+        num_layers = len(layer_patch_tokens)
+
+        # DIRECT TERM: shallow layers (all but last, or reuse single layer if len==1)
+        if num_layers > 1:
+            # Use all but the last layer as shallow
+            shallow_layers = layer_patch_tokens[:-1]
+        else:
+            # Single layer: reuse it for direct term (documented limitation)
+            shallow_layers = layer_patch_tokens
+
+        # Project student once for direct term
+        projected_student = self.direct_proj(student_output)  # [B, D_teacher]
+
+        # Compute direct loss: MSE between projected student and mean-pooled shallow teacher layers
+        direct_losses = []
+        for shallow_tokens in shallow_layers:  # Each [B, N, D_teacher]
+            teacher_shallow_summary = shallow_tokens.mean(dim=1)  # [B, D_teacher]
+            direct_losses.append(F.mse_loss(projected_student, teacher_shallow_summary))
+        direct_loss = torch.stack(direct_losses).mean() if direct_losses else torch.tensor(0.0)
+
+        # GENERATIVE TERM: deepest layer
+        deep_tokens = layer_patch_tokens[-1]  # [B, N, D_teacher]
+
+        # Generate reconstructed tokens from student
+        gen_emb = self.gen_proj(student_output)  # [B, D_teacher]
+        gen_flat = self.gen_decoder(gen_emb)  # [B, N*D_teacher]
+        gen_tokens = gen_flat.view(B, self.vitkd_num_tokens, self.vitkd_teacher_dim)  # [B, N, D]
+
+        # Mask a fraction of tokens and compute MSE only on masked positions
+        N = deep_tokens.size(1)
+        num_masked = max(1, int(N * self.vitkd_mask_ratio))
+
+        # Random mask per batch element
+        mask_indices = torch.rand(B, N, device=deep_tokens.device).argsort(dim=1)[:, :num_masked]
+
+        # Gather masked positions from both generated and target
+        batch_idx = torch.arange(B, device=deep_tokens.device).unsqueeze(1).expand(-1, num_masked)
+        gen_masked = gen_tokens[batch_idx, mask_indices]  # [B, num_masked, D]
+        target_masked = deep_tokens[batch_idx, mask_indices]  # [B, num_masked, D]
+
+        gen_loss = F.mse_loss(gen_masked, target_masked)
+
+        # Total weighted loss
+        total = self.vitkd_weight * direct_loss + self.vitkd_gen_weight * gen_loss
+
+        self._last_loss_metrics = {
+            "vitkd_direct": direct_loss.item(),
+            "vitkd_gen": gen_loss.item(),
+            "total": total.item(),
+        }
         return total
 
 
@@ -336,6 +461,7 @@ __all__ = [
     "DistillationLoss",
     "MultiFunctionDistillationLoss",
     "CosPressLoss",
+    "ViTKDLoss",
     "LOSS_REGISTRY",
     "register_loss",
     "build_loss",

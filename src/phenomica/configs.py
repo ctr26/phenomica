@@ -78,6 +78,11 @@ class TrainingConfig:
     cospress_temperature: PositiveFloat = 0.1
     cospress_cosine_weight: NonNegativeFloat = 1.0
     vitkd_weight: NonNegativeFloat = 1.0
+    vitkd_student_dim: PositiveInt = 768
+    vitkd_teacher_dim: PositiveInt = 768
+    vitkd_mask_ratio: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
+    vitkd_gen_weight: NonNegativeFloat = 1.0
+    vitkd_num_tokens: PositiveInt = 256
     attndistill_weight: NonNegativeFloat = 1.0
     rekd_weight: NonNegativeFloat = 1.0
     use_wandb: bool = True
@@ -178,6 +183,7 @@ def register_configs() -> None:
         eval_freq=5,
     )
     _preset(TrainingConfig, "training", "cospress", loss_type="cospress")
+    _preset(TrainingConfig, "training", "vitkd", loss_type="vitkd")
 
     _preset(ClusterConfig, "cluster", "local")
     _preset(ClusterConfig, "cluster", "biohive", use_submitit=True)
