@@ -24,3 +24,22 @@ sweep-objectives:
         model=simple_resnet18 teacher=dinov2_base data=imagenette \
         training.loss_type=mse,cosine,combined \
         {{biohive}}
+
+# ===========================================================================
+# Ray launch path (INDEPENDENT from the submitit targets above). Ray Train +
+# Ray Tune run on a Ray cluster, or locally with a small in-process runtime --
+# the targets below are CPU-only local smoke runs (use_gpu=False, num_workers=1),
+# no SLURM, no submitit. Point data.root at a small ImageFolder first.
+# ===========================================================================
+
+# Ray Train: single CPU-local distributed run (1 worker, no GPU, no wandb).
+ray-train-local:
+    uv run phenomica-ray-train \
+        model=simple_resnet18 teacher=dinov2_small \
+        data=imagenette training=debug ray_train=local_cpu ray_data=default
+
+# Ray Tune: CPU-local ASHA sweep (debug preset: 2 trials, 1 concurrent, no wandb).
+ray-tune-local:
+    uv run phenomica-ray-tune \
+        model=simple_resnet18 teacher=dinov2_small \
+        data=imagenette training=debug ray_train=local_cpu ray_tune=debug ray_data=default
