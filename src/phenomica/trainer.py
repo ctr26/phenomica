@@ -58,6 +58,17 @@ class DistillationTrainer:
             extract_layers=extract_layers,
         ).to(self.device)
 
+        # Sync student head dims to loaded teacher embed_dim.
+        embed_dim = self.teacher.embed_dim
+        if embed_dim != teacher_cfg.embed_dim:
+            raise ValueError(
+                f"teacher_cfg.embed_dim={teacher_cfg.embed_dim} disagrees with loaded "
+                f"DINOv2 embed_dim={embed_dim}"
+            )
+        model_cfg.projection_dim = embed_dim
+        model_cfg.teacher_cls_dim = embed_dim
+        model_cfg.teacher_patch_dim = embed_dim
+
         # Student.
         self.model = build_model(model_cfg).to(self.device)
         if self.is_distributed:
