@@ -85,6 +85,13 @@ class TrainingConfig:
 
 @dataclass
 class ClusterConfig:
+    """Cluster submission config.
+
+    For --multirun sweeps, use hydra/launcher=submitit_slurm and pass these
+    params as hydra.launcher.* overrides. For single-job non-multirun, the
+    use_submitit flag triggers the manual submitit path in train.py.
+    """
+
     use_submitit: bool = False
     partition: str = "hopper"
     gpus_per_node: PositiveInt = 4
@@ -129,18 +136,36 @@ def register_configs() -> None:
 
     _preset(TeacherConfig, "teacher", "dinov2_base")
     _preset(
-        TeacherConfig, "teacher", "dinov2_small",
-        model_name="dinov2_vits14", embed_dim=384,
+        TeacherConfig,
+        "teacher",
+        "dinov2_small",
+        model_name="dinov2_vits14",
+        embed_dim=384,
     )
     _preset(
-        TeacherConfig, "teacher", "dinov2_large",
-        model_name="dinov2_vitl14", embed_dim=1024,
+        TeacherConfig,
+        "teacher",
+        "dinov2_large",
+        model_name="dinov2_vitl14",
+        embed_dim=1024,
     )
 
     _preset(DataConfig, "data", "imagenet", root="data/imagenet")
     _preset(
-        DataConfig, "data", "custom",
-        root="data/custom", batch_size=128, num_workers=4,
+        DataConfig,
+        "data",
+        "imagenette",
+        root="data/imagenette",
+        batch_size=64,
+        num_workers=4,
+    )
+    _preset(
+        DataConfig,
+        "data",
+        "custom",
+        root="data/custom",
+        batch_size=128,
+        num_workers=4,
     )
 
     _preset(TrainingConfig, "training", "default")

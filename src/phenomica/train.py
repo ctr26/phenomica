@@ -47,9 +47,7 @@ def _run_training(
         data_cfg=data,
     )
 
-    train_loader, val_loader = create_dataloaders(
-        data, is_distributed=trainer.is_distributed
-    )
+    train_loader, val_loader = create_dataloaders(data, is_distributed=trainer.is_distributed)
 
     try:
         trainer.train(train_loader, val_loader)
@@ -59,7 +57,12 @@ def _run_training(
 
 @dataclass
 class PhenomicaConfig:
-    """Top-level config."""
+    """Top-level config.
+
+    For SLURM sweeps via --multirun, the hydra/launcher=submitit_slurm plugin
+    is used and cluster.use_submitit is ignored. The manual cluster.use_submitit
+    path is retained for single-job non-multirun submissions only.
+    """
 
     defaults: list = field(
         default_factory=lambda: [
@@ -69,6 +72,7 @@ class PhenomicaConfig:
             {"data": "imagenet"},
             {"training": "default"},
             {"cluster": "local"},
+            {"override hydra/launcher": "basic"},
         ]
     )
     model: dict = field(default_factory=dict)
