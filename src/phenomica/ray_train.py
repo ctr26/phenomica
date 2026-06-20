@@ -165,6 +165,8 @@ def _run_epoch(
         loss_sum += loss.item() * batch_n
         sample_count += batch_n
 
+    if sample_count == 0:
+        logger.debug("Empty shard: no samples processed in this epoch")
     return loss_sum / sample_count if sample_count else 0.0
 
 
@@ -174,6 +176,9 @@ def _report_epoch(model: torch.nn.Module, metrics: dict[str, float]) -> None:
     A checkpoint is required for ``Result.metrics`` to be populated in Ray
     Train v2, so rank 0 writes the unwrapped student state dict and reports it;
     other ranks report metrics only.
+
+    Note: Non-rank-0 workers report metrics-only (for aggregation) while rank 0
+    attaches the checkpoint.
 
     Args:
         model: The (DDP-wrapped) student whose state is checkpointed.

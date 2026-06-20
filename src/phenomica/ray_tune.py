@@ -4,7 +4,9 @@ Sweeps distillation hyperparameters (learning rate, weight decay, loss type)
 with ``ray.tune.Tuner`` + an ``ASHAScheduler`` for early stopping, logging the
 sweep to W&B via ``WandbLoggerCallback`` (opt-in). Each trial launches the same
 distributed ``TorchTrainer`` used by :mod:`phenomica.ray_train`, following the
-Ray "Tune over Train" pattern.
+Ray "Tune over Train" pattern. Two callback layers bridge Train and Tune: a
+``TuneReportCallback`` (Ray Train ``UserCallback``) propagates worker metrics to
+ASHA, and a ``WandbLoggerCallback`` (Tune ``LoggerCallback``) logs trial results.
 
 This is an INDEPENDENT launch path from submitit; :mod:`phenomica.train` is
 untouched. W&B is opt-in via ``training_cfg.use_wandb`` and runs offline by
