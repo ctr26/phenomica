@@ -184,9 +184,9 @@ class RayTuneSearchSpace:
     lr_max: PositiveFloat = 1e-2
     weight_decay_min: PositiveFloat = 1e-6
     weight_decay_max: PositiveFloat = 1e-2
-    loss_types: list[str] = field(
-        default_factory=lambda: ["mse", "cosine", "combined"]
-    )
+    # NOTE: Values must be a subset of TrainingConfig.loss_type's Literal
+    # ("mse"/"cosine"/"combined").
+    loss_types: list[str] = field(default_factory=lambda: ["mse", "cosine", "combined"])
 
 
 @dataclass
